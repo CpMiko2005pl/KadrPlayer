@@ -1,4 +1,4 @@
-K.createMovieCatalog = function (pauseLocal) {
+K.createMovieCatalog = function (playMovie) {
   const dialog = document.getElementById('catalog');
   const $ = selector => dialog.querySelector(selector);
   const input = $('#catalog-query'), grid = $('#catalog-grid'), status = $('#catalog-status');
@@ -63,10 +63,10 @@ K.createMovieCatalog = function (pauseLocal) {
       year.textContent = movie.year;
       button.append(year);
     }
-    button.addEventListener('click', async () => {
-      pauseLocal();
-      try { await window.kadr.playMovie(movie.url, movie.title); }
-      catch { feedback.textContent = 'Nie udało się otworzyć filmu. Spróbuj ponownie lub wybierz inny tytuł.'; }
+    button.addEventListener('click', () => {
+      feedback.textContent = '';
+      if (dialog.open) dialog.close();
+      playMovie(movie);
     });
     return button;
   }

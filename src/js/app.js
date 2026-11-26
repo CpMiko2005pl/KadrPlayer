@@ -47,7 +47,7 @@
   };
   if (!encList) window.kadr.encoders().then(list => { encList = list; S._enc = { ffmpeg: cfg.ffmpeg, list }; saveSettings(); }).catch(() => { encList = ['libx264']; });
   const engine = new K.Engine(video, { base: cfg.base, token: cfg.token, settings: () => S, encoder: pickEncoder });
-  const openCatalog = K.createMovieCatalog(() => engine.pause());
+  const openCatalog = K.createMovieCatalog(movie => openCatalogItem({ path: movie.url, title: movie.title, catalog: true }));
   const sound = new K.AudioChain(video);
   const subsView = new K.SubtitleView($('#subs'));
   let gl = null;
@@ -71,6 +71,83 @@
   let plIndex = -1;
   let dirty = true;
   let showRemaining = false;
+  let remote = null;
+  let movieId = 0;
+  const playbackTime = () => remote ? remote.time : video.currentTime;
+  const playbackDuration = () => remote ? remote.duration : engine.duration();
+  const playbackPaused = () => remote ? remote.paused : video.paused;
+  const seekPlayback = (t, exact) => remote ? controlMovie('seek', t) : engine.seek(t, exact);
+
+  function movieBounds() {
+    const y = $('#titlebar').offsetHeight;
+    return { x: 0, y, width: innerWidth, height: innerHeight - y - $('#controls').offsetHeight };
+  }
+
+  function closeRemote() {
+    if (!remote) return;
+    const id = remote.id;
+    remote = null;
+    app.classList.remove('catalog-movie');
+    window.kadr.movieAction(id, 'close').catch(() => {});
+  }
+
+  function refreshMovieView() {
+    if (!remote) return;
+    const id = remote.id;
+    window.kadr.movieAction(id, 'bounds', movieBounds()).catch(() => {});
+    const visible = !$('#catalog').open && !document.querySelector('.drawer.open, .modal.open') && !app.classList.contains('error');
+    window.kadr.movieAction(id, 'visible', visible).catch(() => {});
+  }
+  const movieObserver = new MutationObserver(refreshMovieView);
+  for (const el of document.querySelectorAll('#catalog, .drawer, #modal')) movieObserver.observe(el, { attributes: true, attributeFilter: ['open', 'class'] });
+  window.addEventListener('resize', refreshMovieView);
+
+  async function controlMovie(action, value) {
+    const current = remote;
+    if (!current?.ready) return;
+    try {
+      const state = await window.kadr.movieAction(current.id, action, value);
+      if (current !== remote) return;
+      if (!state) throw new Error('Brak obrazu.');
+      const ended = state.ended && !current.ended;
+      Object.assign(current, state);
+      updateTimeUI();
+      setPlayIcon();
+      if (ended) onEnded();
+    } catch {
+      if (current === remote) movieFailed();
+    }
+  }
+
+  function movieFailed() {
+    closeRemote();
+    $('#error-text').textContent = 'Nie udało się odtworzyć filmu z HydraHD. Otwórz katalog, aby spróbować ponownie lub wybrać inny tytuł.';
+    $('[data-act=force-encode]').style.display = 'none';
+    app.classList.remove('waiting');
+    app.classList.add('error');
+  }
+
+  async function startCatalogMovie(item, start) {
+    const current = remote = { id: ++movieId, time: 0, duration: 0, paused: true };
+    app.classList.add('catalog-movie', 'ui-visible');
+    seekEl.querySelector('.chapters').replaceChildren();
+    setPlayIcon();
+    updateTimeUI();
+    try {
+      if (!await window.kadr.playMovie(item.path, current.id, movieBounds(), S.muted ? 0 : S.volume)) return;
+      if (current !== remote) return;
+      current.ready = true;
+      refreshMovieView();
+      app.classList.remove('waiting');
+      if (start) await controlMovie('seek', start);
+      while (current === remote) {
+        await controlMovie('status');
+        await new Promise(resolve => setTimeout(resolve, 350));
+      }
+    } catch {
+      if (current === remote) movieFailed();
+    }
+  }
 
   // ---------- OSD / tooltip ----------
   let osdTimer;
@@ -109,7 +186,7 @@
     hideTimer = setTimeout(maybeHide, app.classList.contains('mini') ? 1600 : 2600);
   }
   function maybeHide() {
-    if (video.paused || app.classList.contains('empty') || overUI() || seekDrag || volDrag) { hideTimer = setTimeout(maybeHide, 1200); return; }
+    if (remote || video.paused || app.classList.contains('empty') || overUI() || seekDrag || volDrag) { hideTimer = setTimeout(maybeHide, 1200); return; }
     app.classList.remove('ui-visible');
     tip.classList.remove('on');
     layoutSubs();
@@ -345,7 +422,7 @@
   let seekDrag = false;
   function updateTimeUI() {
     if (!cur) return;
-    const d = engine.duration(), t = seekDrag ? seekDragT : video.currentTime;
+    const d = playbackDuration(), t = seekDrag ? seekDragT : playbackTime();
     $('#t-cur').textContent = fmt(t);
     $('#t-dur').textContent = d ? (showRemaining ? '-' + fmt(d - t) : fmt(d)) : '—';
     const p = d ? clamp(t / d, 0, 1) * 100 : 0;
@@ -359,15 +436,15 @@
       buf.textContent = '';
       for (const [a, b] of ranges) { const i = document.createElement('i'); i.style.left = (a / d * 100) + '%'; i.style.width = ((b - a) / d * 100) + '%'; buf.appendChild(i); }
     }
-    if (cur && !video.paused && ++resumeTick % 40 === 0) saveResume();
+    if (cur && !playbackPaused() && ++resumeTick % 40 === 0) saveResume();
   }
   let resumeTick = 0;
   $('#time').onclick = () => { showRemaining = !showRemaining; updateTimeUI(); };
   let seekDragT = 0;
-  const seekTimeAt = x => { const r = seekEl.getBoundingClientRect(); return clamp((x - r.left) / r.width, 0, 1) * engine.duration(); };
+  const seekTimeAt = x => { const r = seekEl.getBoundingClientRect(); return clamp((x - r.left) / r.width, 0, 1) * playbackDuration(); };
   let liveSeekT = 0;
   seekEl.addEventListener('pointerdown', e => {
-    if (!cur || !engine.duration() || e.button !== 0) return;
+    if (!cur || !playbackDuration() || e.button !== 0) return;
     seekDrag = true; seekEl.classList.add('drag'); seekEl.setPointerCapture(e.pointerId);
     seekDragT = seekTimeAt(e.clientX); updateTimeUI(); hoverTip(e.clientX);
   });
@@ -380,7 +457,7 @@
   seekEl.addEventListener('pointerup', e => {
     if (!seekDrag) return;
     seekDrag = false; seekEl.classList.remove('drag');
-    engine.seek(seekTimeAt(e.clientX), true);
+    seekPlayback(seekTimeAt(e.clientX), true);
   });
   seekEl.addEventListener('wheel', e => { e.preventDefault(); e.stopPropagation(); seekBy(e.deltaY < 0 ? S.seekStep : -S.seekStep); }, { passive: false });
 
@@ -389,7 +466,7 @@
   const thumbCache = new Map();
   let thumbCtl = null, thumbTimer = null, thumbKey = null;
   function hoverTip(x) {
-    if (!cur || !engine.duration()) return;
+    if (!cur || !playbackDuration()) return;
     const r = seekEl.getBoundingClientRect();
     const t = seekTimeAt(x);
     tipEl.style.left = clamp(x - r.left, 100, r.width - 100) + 'px';
@@ -424,6 +501,7 @@
   let volDrag = false;
   function applyVolume() {
     sound.set({ volume: S.volume, muted: S.muted });
+    if (remote?.ready) controlMovie('volume', S.muted ? 0 : S.volume);
     const max = +S.volumeMax || 1;
     const p = clamp(S.volume / max, 0, 1) * 100;
     volEl.querySelector('.fill').style.width = p + '%';
@@ -450,16 +528,18 @@
   // ---------- playback controls ----------
   function togglePlay() {
     if (!cur) return;
+    if (remote) { controlMovie('toggle'); return; }
     sound.ensure(); sound.resume();
     if (video.paused) { engine.play(); centerIcon('play'); } else { engine.pause(); centerIcon('pause'); }
   }
   function seekBy(d) {
-    if (!cur || !engine.mode) return;
-    const t = clamp(video.currentTime + d, 0, engine.duration() || Infinity);
-    engine.seek(t, Math.abs(d) < 3);
-    osd(`${d > 0 ? '+' : '−'}${Math.abs(d)} s`, fmt(t) + ' / ' + fmt(engine.duration()), 900);
+    if (!cur || (!remote && !engine.mode)) return;
+    const t = clamp(playbackTime() + d, 0, playbackDuration() || Infinity);
+    seekPlayback(t, Math.abs(d) < 3);
+    osd(`${d > 0 ? '+' : '−'}${Math.abs(d)} s`, fmt(t) + ' / ' + fmt(playbackDuration()), 900);
   }
   function setSpeed(r) {
+    if (remote) return;
     r = clamp(Math.round(r * 100) / 100, 0.1, 4);
     video.playbackRate = r;
     video.defaultPlaybackRate = r;
@@ -486,7 +566,7 @@
   $('#b-audio').onclick = () => popup(audioMenu());
   $('#btn-menu').onclick = () => popup(mainMenu());
   function setPlayIcon() {
-    $('#b-play').innerHTML = icon(video.paused ? 'play' : 'pause');
+    $('#b-play').innerHTML = icon(playbackPaused() ? 'play' : 'pause');
     $('#b-speed').textContent = (video.playbackRate || 1) + '×';
   }
   setPlayIcon();
@@ -588,9 +668,9 @@
       mk('Otwórz folder…', openFolder, { accelerator: 'Ctrl+Shift+O' }),
       mk('Otwórz adres URL…', openUrl, { accelerator: 'Ctrl+U' }),
       mk('Przeglądaj filmy…', openCatalog, { accelerator: 'Ctrl+K' }),
-      mk('Ostatnio otwierane', null, { submenu: ST.recent.length ? ST.recent.slice(0, 15).map(r => mk(r.title || baseName(r.path), () => openPaths([r.path]))) : [mk('(pusto)', null, { enabled: false })] }),
+      mk('Ostatnio otwierane', null, { submenu: ST.recent.length ? ST.recent.slice(0, 15).map(r => mk(r.title || baseName(r.path), () => openRecent(r))) : [mk('(pusto)', null, { enabled: false })] }),
       sep,
-      mk(has && !video.paused ? 'Pauza' : 'Odtwórz', togglePlay, { enabled: has, accelerator: 'Space' }),
+      mk(has && !playbackPaused() ? 'Pauza' : 'Odtwórz', togglePlay, { enabled: has, accelerator: 'Space' }),
       mk('Zatrzymaj', stopPlayback, { enabled: has }),
       mk('Poprzedni', () => playRelative(-1), { enabled: plIndex > 0 }),
       mk('Następny', () => playRelative(1), { enabled: plIndex >= 0 && plIndex < playlist.length - 1 }),
@@ -835,6 +915,16 @@
     playIndex(start);
   }
 
+  function openCatalogItem(item) {
+    playlist = [item];
+    playIndex(0);
+  }
+
+  function openRecent(item) {
+    if (item.catalog) openCatalogItem({ path: item.path, title: item.title, catalog: true });
+    else openPaths([item.path]);
+  }
+
   function playIndex(i, opts = {}) {
     if (i < 0 || i >= playlist.length) return;
     plIndex = i;
@@ -852,6 +942,7 @@
   }
   function stopPlayback() {
     saveResume();
+    closeRemote();
     engine.stop();
     cur = null;
     subsView.clear();
@@ -866,8 +957,8 @@
 
   function resumeKey(p) { return p.toLowerCase(); }
   function saveResume() {
-    if (!cur || !cur.info || !S.resume) return;
-    const d = engine.duration(), t = video.currentTime;
+    if (!cur || (!cur.info && !remote?.ready) || !S.resume) return;
+    const d = playbackDuration(), t = playbackTime();
     const k = resumeKey(cur.item.path);
     if (d > 60 && t > 10 && t < d - 20) ST.resume[k] = { t: Math.round(t), d: Math.round(d), at: Date.now() };
     else if (t >= d - 20 && d) delete ST.resume[k];
@@ -880,6 +971,7 @@
 
   function playItem(item, opts = {}) {
     saveResume();
+    closeRemote();
     clearThumbs();
     const c = { item, info: null, crop: null, pan: { x: 0, y: 0 }, subTracks: [], subSel: -1, subDelay: 0, cues: null, firstFrame: true };
     cur = c;
@@ -891,8 +983,13 @@
     let start = opts.start || 0;
     const res = ST.resume[resumeKey(item.path)];
     if (!opts.start && S.resume && res && res.t > 10) { start = res.t; c.resumed = true; }
-    ST.recent = [{ path: item.path, title: item.title, at: Date.now(), t: start, d: res ? res.d : 0 }, ...ST.recent.filter(r => r.path !== item.path)].slice(0, 30);
+    ST.recent = [{ path: item.path, title: item.title, catalog: item.catalog, at: Date.now(), t: start, d: res ? res.d : 0 }, ...ST.recent.filter(r => r.path !== item.path)].slice(0, 30);
     saveState();
+    if (item.catalog) {
+      engine.stop();
+      startCatalogMovie(item, start);
+      return;
+    }
     sound.ensure(); sound.resume();
     gl && (gl.texW = 0);
     engine.load(item, { start });
@@ -956,6 +1053,10 @@
     delete ST.resume[resumeKey(cur.item.path)];
     const r = ST.recent.find(x => x.path === cur.item.path); if (r) r.t = 0;
     saveState();
+    if (remote) {
+      if (S.repeat !== 'off') controlMovie('seek', 0).then(() => { if (remote && playbackPaused()) controlMovie('toggle'); });
+      return;
+    }
     if (S.repeat === 'one') { engine.seek(0, true); engine.play(); return; }
     if (S.autoNext && (plIndex < playlist.length - 1 || (S.repeat === 'all' && playlist.length > 1) || (S.shuffle && playlist.length > 2))) { playRelative(1); return; }
     if (S.repeat === 'all' && playlist.length === 1) { engine.seek(0, true); engine.play(); return; }
@@ -1203,7 +1304,7 @@
       if (res && res.d) { const pg = document.createElement('div'); pg.className = 'prog'; const i = document.createElement('i'); i.style.width = clamp(res.t / res.d * 100, 2, 100) + '%'; pg.appendChild(i); el.appendChild(pg); }
       const w = document.createElement('span'); w.className = 'when'; w.textContent = ago(r.at);
       el.appendChild(w);
-      el.onclick = () => openPaths([r.path]);
+      el.onclick = () => openRecent(r);
       box.appendChild(el);
     }
   }
@@ -1329,9 +1430,9 @@
     }
     else if (k === 'MediaTrackNext') playRelative(1);
     else if (k === 'MediaTrackPrevious') playRelative(-1);
-    else if (k === 'Home') { if (cur) { engine.seek(0, true); osd('Od początku'); } }
-    else if (k === 'End') { if (cur) engine.seek(engine.duration() - 1, true); }
-    else if (/^[0-9]$/.test(k) && cur && engine.duration()) { const t = engine.duration() * (+k / 10); engine.seek(t, true); osd(`${+k * 10}%`, fmt(t)); }
+    else if (k === 'Home') { if (cur) { seekPlayback(0, true); osd('Od początku'); } }
+    else if (k === 'End') { if (cur) seekPlayback(playbackDuration() - 1, true); }
+    else if (/^[0-9]$/.test(k) && cur && playbackDuration()) { const t = playbackDuration() * (+k / 10); seekPlayback(t, true); osd(`${+k * 10}%`, fmt(t)); }
     else handled = false;
     if (handled) e.preventDefault();
   });
@@ -1356,6 +1457,7 @@
   });
 
   window.kadr.onOpen(({ files, replace }) => openPaths(files, { append: !replace }));
+  window.kadr.onMovieKey(key => app.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true })));
 
   // the GPU process died while Chromium decoded this codec → never trust its hardware decoder for it again
   window.kadr.onGpuCrash(() => {

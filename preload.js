@@ -13,6 +13,8 @@ contextBridge.exposeInMainWorld('kadr', {
   findInPage: call('media:find-in-page'),
   listMovies: call('catalog:list'),
   playMovie: call('catalog:play'),
+  movieAction: call('catalog:action'),
+  onMovieKey: on('catalog:key'),
   encoders: call('media:encoders'),
   cropdetect: call('media:cropdetect'),
   subEmbedded: call('media:sub-embedded'),

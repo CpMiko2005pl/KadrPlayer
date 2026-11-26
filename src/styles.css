@@ -139,6 +139,8 @@ button { font: inherit; color: inherit; }
 #app.empty #controls { display: none; }
 #app:not(.ui-visible) #controls, #app:not(.ui-visible) #titlebar { opacity: 0; pointer-events: none; }
 #app:not(.ui-visible) #controls { transform: translateY(8px); }
+#app.catalog-movie #controls { background: #0b0c10; }
+#app.catalog-movie :is(#b-shot, #b-audio, #b-subs, #b-speed, #b-settings) { display: none; }
 #app:not(.ui-visible):not(.empty) #stage { cursor: none; }
 #app.empty #titlebar { background: transparent; }
 

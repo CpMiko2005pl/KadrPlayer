@@ -132,6 +132,7 @@ function createWindow() {
   win.on('leave-full-screen', () => win.webContents.send('fullscreen', false));
   win.on('maximize', () => win.webContents.send('maximized', true));
   win.on('unmaximize', () => win.webContents.send('maximized', false));
+  win.on('close', () => catalog.closeMovie());
   win.on('closed', () => { win = null; });
   if (DEBUG) win.webContents.on('console-message', (e, level, msg, line, src) => log('page', level, msg, src ? `${path.basename(src)}:${line}` : ''));
   win.webContents.on('render-process-gone', (e, d) => log('renderer gone', d));
@@ -176,7 +177,8 @@ handle('state:set', s => { state.set(Object.assign({}, state.get(), { recent: s.
 handle('media:probe', input => media.probe(input));
 handle('media:find-in-page', url => media.findInPage(url));
 handle('catalog:list', request => catalog.fetchCatalog(request));
-handle('catalog:play', (url, title) => catalog.openMovie(win, url, title));
+handle('catalog:play', (url, id, bounds, volume) => catalog.openMovie(win, url, id, bounds, volume));
+handle('catalog:action', (id, action, value) => catalog.movieAction(id, action, value));
 handle('media:encoders', () => media.encoders());
 handle('media:cropdetect', (input, dur) => media.cropdetect(input, dur));
 handle('media:sub-embedded', (input, index) => media.embeddedSubtitle(input, index));

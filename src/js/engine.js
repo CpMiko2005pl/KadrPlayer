@@ -618,7 +618,7 @@ window.K = window.K || {};
       this.failedModes = new Set();
       this.start(this.currentTime(), null);
     }
-    stop() { this.teardown(); this.info = null; this.item = null; this.emit('stopped'); }
+    stop() { this.gen++; this.teardown(); this.info = null; this.item = null; this.loading = false; this.emit('stopped'); }
     bufferedRanges() {
       const b = this.sb ? this.sb.buffered : this.video.buffered;
       const out = [];
