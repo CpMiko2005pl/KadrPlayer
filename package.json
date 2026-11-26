@@ -1,0 +1,117 @@
+{
+  "name": "kadr-player",
+  "productName": "Kadr Player",
+  "version": "1.1.0",
+  "description": "Odtwarzacz wideo na Windows: każdy format (ffmpeg), skalowanie wysokiej jakości (Lanczos, FSR), płynny ruch, korektor dźwięku i napisy",
+  "main": "main.js",
+  "author": "BiNoX",
+  "license": "SEE LICENSE IN build/license.txt",
+  "scripts": {
+    "start": "electron .",
+    "icon": "electron scripts/make-icon.js",
+    "installer-art": "electron scripts/make-installer-art.js",
+    "ffmpeg": "node scripts/copy-ffmpeg.js",
+    "installer": "node scripts/copy-ffmpeg.js && electron-builder --win nsis --x64"
+  },
+  "build": {
+    "appId": "fun.tacticalops.kadrplayer",
+    "productName": "Kadr Player",
+    "copyright": "Kadr Player — sponsorzy: ProZlecenie.pl i CyberScope.pl",
+    "asar": true,
+    "electronLanguages": [
+      "en-US",
+      "pl"
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "afterPack": "scripts/after-pack.js",
+    "files": [
+      "main.js",
+      "preload.js",
+      "media.js",
+      "catalog.js",
+      "package.json",
+      "src/**/*",
+      "build/icon.ico",
+      "build/icon.png"
+    ],
+    "extraResources": [
+      {
+        "from": "vendor/ffmpeg",
+        "to": "ffmpeg",
+        "filter": [
+          "*.exe",
+          "*.txt"
+        ]
+      }
+    ],
+    "fileAssociations": [
+      {
+        "ext": [
+          "mp4", "m4v", "mkv", "webm", "avi", "mov", "wmv", "flv", "f4v", "mpg", "mpeg", "m2v",
+          "ts", "m2ts", "mts", "vob", "3gp", "3g2", "ogv", "divx", "xvid", "rm", "rmvb", "asf", "dv", "mxf", "y4m", "hevc", "264", "265"
+        ],
+        "name": "KadrPlayer.Video",
+        "description": "Plik wideo (Kadr Player)",
+        "icon": "build/icon.ico"
+      },
+      {
+        "ext": [
+          "mp3", "flac", "m4a", "aac", "ogg", "opus", "wav", "wma", "ac3", "dts", "ape", "wv", "mka", "aiff", "alac"
+        ],
+        "name": "KadrPlayer.Audio",
+        "description": "Plik dźwiękowy (Kadr Player)",
+        "icon": "build/icon.ico"
+      }
+    ],
+    "win": {
+      "icon": "build/icon.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "signAndEditExecutable": false,
+      "signtoolOptions": {
+        "sign": "./scripts/no-sign.js"
+      }
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": true,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": "always",
+      "createStartMenuShortcut": true,
+      "shortcutName": "Kadr Player",
+      "uninstallDisplayName": "Kadr Player",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerHeaderIcon": "build/icon.ico",
+      "artifactName": "Kadr-Player-Setup-${version}.exe",
+      "runAfterFinish": true,
+      "deleteAppDataOnUninstall": false,
+      "multiLanguageInstaller": true,
+      "installerLanguages": [
+        "pl_PL",
+        "en_US"
+      ],
+      "language": "1045",
+      "license": "build/license.txt",
+      "installerSidebar": "build/installerSidebar.bmp",
+      "uninstallerSidebar": "build/installerSidebar.bmp",
+      "installerHeader": "build/installerHeader.bmp",
+      "include": "build/installer.nsh"
+    }
+  },
+  "devDependencies": {
+    "@fontsource/inter": "^5.1.0",
+    "electron": "33.2.1",
+    "electron-builder": "26.15.3",
+    "rcedit": "^4.0.1"
+  }
+}
