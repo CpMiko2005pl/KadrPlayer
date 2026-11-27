@@ -24,7 +24,7 @@ for (const f of ['ffmpeg.exe', 'ffprobe.exe']) {
 }
 const version = execFileSync(path.join(dest, 'ffmpeg.exe'), ['-hide_banner', '-version'], { encoding: 'utf8' }).split(/\r?\n/)[0];
 fs.writeFileSync(path.join(dest, 'FFMPEG-LICENSE.txt'),
-  `Kadr Player bundles FFmpeg (${version}).\r\n` +
+  `Kadr bundles FFmpeg (${version}).\r\n` +
   'FFmpeg is free software licensed under the GNU General Public License version 3 (this build includes GPL components such as libx264 and libx265).\r\n' +
   'Build: https://www.gyan.dev/ffmpeg/builds/  Source code: https://ffmpeg.org/download.html and https://github.com/FFmpeg/FFmpeg\r\n' +
   'License text: https://www.gnu.org/licenses/gpl-3.0.txt\r\n');

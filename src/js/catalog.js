@@ -2,7 +2,7 @@ K.createMovieCatalog = function (playMovie) {
   const dialog = document.getElementById('catalog');
   const $ = selector => dialog.querySelector(selector);
   const input = $('#catalog-query'), grid = $('#catalog-grid'), status = $('#catalog-status');
-  const sections = { popular: 'Na czasie w HydraHD', date: 'Ostatnio dodane filmy', series: 'Ostatnio dodane seriale' };
+  const sections = { popular: 'Na czasie w Kadr', date: 'Ostatnio dodane filmy', series: 'Ostatnio dodane seriale' };
   const detail = $('#series-detail'), seasonSelect = $('#series-season'), episodeList = $('#series-episodes');
   let section = 'popular', query = '', page = 1, request = 0, loaded = false;
   const genre = $('#catalog-genre'), sort = $('#catalog-sort'), kind = $('#catalog-kind');
@@ -194,7 +194,7 @@ K.createMovieCatalog = function (playMovie) {
       loaded = true;
     } catch {
       if (id !== request) return;
-      status.textContent = 'Katalog HydraHD jest teraz niedostępny.';
+      status.textContent = 'Katalog Kadr jest teraz niedostępny.';
       $('#catalog-retry').hidden = false;
     }
   }

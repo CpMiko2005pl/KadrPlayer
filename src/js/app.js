@@ -1,4 +1,4 @@
-// Kadr Player — the page: wires the engine, renderer, sound, subtitles and all the controls together
+// Kadr — the page: wires the engine, renderer, sound, subtitles and all the controls together
 (async () => {
   const $ = s => document.querySelector(s);
   const app = $('#app'), stage = $('#stage'), video = $('#video'), canvas = $('#gl');
@@ -127,7 +127,7 @@
   function movieFailed() {
     closeRemote();
     showUI();
-    $('#error-text').textContent = 'Nie udało się odtworzyć filmu z HydraHD. Otwórz katalog, aby spróbować ponownie lub wybrać inny tytuł.';
+    $('#error-text').textContent = 'Nie udało się odtworzyć filmu z katalogu Kadr. Otwórz katalog, aby spróbować ponownie lub wybrać inny tytuł.';
     $('[data-act=force-encode]').style.display = 'none';
     app.classList.remove('waiting');
     app.classList.add('error');
@@ -143,6 +143,7 @@
       if (!await window.kadr.playMovie(item.path, current.id, movieBounds(), S.muted ? 0 : S.volume)) return;
       if (current !== remote) return;
       current.ready = true;
+      captionAppearance();
       refreshMovieView();
       app.classList.remove('waiting');
       showUI();
@@ -570,7 +571,7 @@
   $('#b-settings').onclick = () => togglePanel();
   $('#b-list').onclick = () => toggleList();
   $('#b-speed').onclick = () => popup(speedMenu());
-  $('#b-subs').onclick = () => remote ? openCaptions() : popup(subsMenu());
+  $('#b-subs').onclick = () => openCaptions();
   $('#b-audio').onclick = () => popup(audioMenu());
   $('#btn-menu').onclick = () => popup(mainMenu());
   $('#btn-back').onclick = returnToCatalog;
@@ -659,50 +660,149 @@
   function closeCaptions() {
     if (captionDialog.open) captionDialog.close();
   }
-  captionDialog.addEventListener('close', () => {
+  captionDialog.addEventListener('close', async () => {
+    const playback = returnPlayback;
+    returnPlayback = null;
+    ++pickerRevision;
     captionSession++;
-    if (generating) window.kadr.cancelCaptions().catch(() => {});
+    if (generating) await window.kadr.cancelCaptions().catch(() => {});
+    if (playback?.movie) await window.kadr.movieAction(playback.movie.id, 'caption-dismiss').catch(() => {});
+    await playback?.paused;
+    if (playback?.resume && cur === playback.c && !captionDialog.open) {
+      if (playback.movie === remote && remote) await window.kadr.movieAction(remote.id, 'play').catch(() => {});
+      else if (!remote && !playback.movie) video.play().catch(() => {});
+    }
+    if (!captionDialog.open) $('#b-subs').focus({ preventScroll: true });
   });
   $('#captions-close').onclick = closeCaptions;
   $('#captions-get-key').onclick = () => window.kadr.external('https://console.groq.com/keys');
   function captionError(error) {
     return String(error.message || error).split('Error: ').pop().slice(0, 220);
   }
+  let pickerRevision = 0, returnPlayback = null;
+  const languages = $('#captions-lang'), versions = $('#captions-version');
+  const names = new Intl.DisplayNames(['pl'], { type: 'language' });
+  function language(code) {
+    const known = K.langName(code);
+    if (known && known !== code) return known;
+    try { return code && code !== 'und' ? names.of(code) : 'Inne'; } catch { return code || 'Inne'; }
+  }
+  function captionAppearance() {
+    const preview = $('#captions-preview span');
+    preview.style.fontSize = S.subSize * 3.5 + 'px';
+    preview.style.backgroundColor = 'rgba(0,0,0,' + S.subBg + ')';
+    if (remote?.ready) window.kadr.movieAction(remote.id, 'caption-style', {
+      size: S.subSize, bg: S.subBg, delay: cur?.subDelay || 0
+    }).catch(e => { captionStatus.textContent = captionError(e); });
+  }
+  for (const [id, setting] of [['size','subSize'], ['bg','subBg']]) {
+    $('#captions-' + id).oninput = e => setSetting(setting, Number(e.target.value));
+  }
+  $('#captions-delay').oninput = e => {
+    if (cur && e.target.value !== '' && e.target.validity.valid) subDelay(+e.target.value - (cur.subDelay || 0));
+  };
+  async function generationHelp() {
+    const cloud = $('#captions-engine').value === 'groq';
+    $('#captions-cloud').hidden = !cloud;
+    const ready = !cloud && await window.kadr.captionModelReady().catch(() => false);
+    if (cloud !== ($('#captions-engine').value === 'groq')) return;
+    $('#captions-help').textContent = cloud ? 'Dźwięk wybranego fragmentu zostanie wysłany do Groq. Klucz pozostaje w pamięci aplikacji.'
+      : ready ? 'Model Whisper jest na tym komputerze.' : 'Pierwsze użycie pobierze model Whisper (148 MB). Dźwięk zostanie na komputerze.';
+  }
+  $('#captions-engine').onchange = generationHelp;
   async function openCaptions(expanded = false) {
     if (!cur || (remote && !remote.ready)) return;
-    if (!captionDialog.open) captionDialog.showModal();
-    $('#captions-ai').open = expanded === true;
+    const c = cur, movie = remote;
+    if (!captionDialog.open) {
+      captionDialog.showModal();
+      $('#captions-ai').open = expanded === true;
+      $('#captions-engine').value = 'local';
+      const playback = returnPlayback = { c, movie, resume: false };
+      if (movie) {
+        playback.paused = (async () => {
+          const state = await window.kadr.movieAction(movie.id, 'status');
+          if (state && !state.paused && returnPlayback === playback) {
+            await window.kadr.movieAction(movie.id, 'pause');
+            playback.resume = true;
+          }
+        })().catch(() => {});
+      } else if (!video.paused) { video.pause(); playback.resume = true; }
+    }
     captionStatus.textContent = '';
-    $('#captions-help').textContent = 'Groq tworzy napisy w języku nagrania. Bezpłatny plan ma limity. Klucz pozostaje w pamięci do zamknięcia aplikacji. ' + (remote ? 'Podczas generowania HydraHD odtwarza wybrany fragment w czasie rzeczywistym, a potem wraca do poprzedniej pozycji.' : 'Do Groq trafi dźwięk wybranego fragmentu pliku.');
-    const c = cur;
-    const container = $('#captions-tracks');
-    container.replaceChildren();
-    $('#captions-provider').hidden = true;
+    $('#captions-size').value = S.subSize;
+    $('#captions-bg').value = S.subBg;
+    $('#captions-delay').value = c.subDelay || 0;
     $('#captions-save').hidden = !c.generated?.length;
-    if (!remote) return;
+    const canGenerate = movie || (c.info?.audio?.length && !/^https?:/i.test(c.item.path));
+    $('#captions-help').hidden = $('#captions-generate').hidden = $('#captions-ai').hidden = !canGenerate;
+    void generationHelp();
+    captionAppearance();
+    const revision = ++pickerRevision;
+    const current = () => revision === pickerRevision && cur === c && captionDialog.open;
     try {
-      const list = await window.kadr.movieAction(remote.id, 'caption-list');
-      if (cur !== c || !captionDialog.open || !list) return;
-      $('#captions-provider').hidden = !list.provider;
-      const select = document.createElement('select');
-      select.add(new Option('Wyłączone', '-1'));
-      if (list.providerOn) select.add(new Option('Napisy HydraHD', 'provider'));
-      list.tracks.forEach((track, i) => select.add(new Option(track.label, String(i))));
-      select.value = list.providerOn ? 'provider' : String(list.tracks.findIndex(t => t.active));
-      select.onchange = async () => {
-        try { await window.kadr.movieAction(remote.id, 'caption-select', Number(select.value)); closeCaptions(); }
-        catch (e) { captionStatus.textContent = captionError(e); }
-      };
-      const label = document.createElement('label');
-      label.append('Aktywna ścieżka', select);
-      container.replaceChildren(label);
-    } catch (e) { captionStatus.textContent = captionError(e); }
+      const list = movie ? await window.kadr.movieAction(movie.id, 'caption-list') : { langs: [], tracks: c.subTracks.map((t, index) =>
+        ({ label: t.label, lang: t.lang, index, active: index === c.subSel })) };
+      if (!current() || !list) return;
+      const active = list.tracks.find(t => t.active);
+      $('#captions-active').textContent = active ? 'Aktywne napisy · ' + active.label : 'Napisy wyłączone';
+      const groups = new Map();
+      function group(code) {
+        const label = language(code);
+        if (!groups.has(label)) groups.set(label, { tracks: [], sources: [] });
+        return groups.get(label);
+      }
+      for (const t of list.tracks) group(t.lang || guessLang(t.label)).tracks.push(t);
+      for (const l of list.langs) group(l.code).sources.push(l);
+      const labels = Array.from(groups.keys()).sort((a,b) => Number(b === 'polski') - Number(a === 'polski') || a.localeCompare(b, 'pl'));
+      languages.replaceChildren(...labels.map(l => new Option(l, l)));
+      if (active) languages.value = language(active.lang || guessLang(active.label));
+      languages.disabled = !labels.length;
+      let query = 0;
+      async function populate() {
+        const q = ++query, g = groups.get(languages.value);
+        versions.replaceChildren(new Option(g ? 'Wczytywanie…' : 'Brak dostępnych napisów', ''));
+        versions.disabled = true;
+        if (!g) return;
+        const choices = g.tracks.map(t => ({ ...t, native: true }));
+        for (const source of g.sources) {
+          const rows = await window.kadr.movieAction(movie.id, 'caption-versions', source.code);
+          if (!current() || q !== query) return;
+          for (const r of rows || []) {
+            const key = JSON.stringify([source.code, r.index, r.label]);
+            if (!choices.some(t => t.source === key)) choices.push({ ...r, lang: source.code, source: key });
+          }
+        }
+        versions.replaceChildren(new Option(choices.length ? 'Wybierz wersję…' : 'Brak wersji w tym języku', ''));
+        choices.forEach((t, i) => versions.add(new Option((i + 1) + '. ' + t.label + (t.active ? ' ✓' : ''), String(i), false, !!t.active)));
+        versions.disabled = !choices.length;
+        versions.onchange = async () => {
+          const t = choices[versions.value];
+          if (!t) return;
+          languages.disabled = versions.disabled = true;
+          try {
+            if (!movie) await selectSub(t.index);
+            else if (t.native) await window.kadr.movieAction(movie.id, 'caption-select', t.index);
+            else {
+              const result = await window.kadr.movieAction(movie.id, 'caption-apply', t);
+              if (!current()) return;
+              if (!result.native) {
+                const cues = result.cues || K.parseSubtitles(result.body);
+                if (!cues.length) throw Error('Ta wersja nie zawiera rozpoznanych napisów.');
+                await window.kadr.movieAction(movie.id, 'caption-add', { ...t, cues });
+              }
+            }
+            if (current()) await openCaptions();
+          } catch (e) { if (current()) { captionStatus.textContent = captionError(e); languages.disabled = versions.disabled = false; } }
+        };
+      }
+      languages.onchange = () => populate().catch(e => { if (current()) captionStatus.textContent = captionError(e); });
+      await populate();
+    } catch (e) { if (current()) captionStatus.textContent = captionError(e); }
   }
-  $('#captions-provider').onclick = async () => {
-    try {
-      if (!await window.kadr.movieAction(remote.id, 'caption-provider')) throw Error('Menu dostawcy jest niedostępne.');
-      closeCaptions();
-    } catch (e) { captionStatus.textContent = captionError(e); }
+  $('#captions-off').onclick = async () => {
+    if (remote) await window.kadr.movieAction(remote.id, 'caption-select', -1);
+    else await selectSub(-1);
+    await openCaptions();
   };
   async function importRemoteFile(file) {
     const movie = remote;
@@ -725,20 +825,30 @@
     if (remote) await importRemoteFile(file);
     else { addExternalSub(file, true); closeCaptions(); }
   };
-  window.kadr.onCaptionProgress(({ position, seconds, start, length }) => {
-    if (generating && captionDialog.open) captionStatus.textContent = 'Generowanie napisów od ' + fmt(position) + ' do ' + fmt(position + seconds) + ' · koniec zakresu ' + fmt(start + length);
+  window.kadr.onCaptionProgress(({ position, seconds, start, length, received, total }) => {
+    if (!generating || !captionDialog.open) return;
+    const progress = $('#captions-progress');
+    progress.hidden = !total;
+    if (total) {
+      progress.max = total;
+      progress.value = received;
+      captionStatus.textContent = 'Pobieranie modelu · ' + Math.floor(received * 100 / total) + '%';
+      return;
+    }
+    captionStatus.textContent = 'Generowanie napisów od ' + fmt(position) + ' do ' + fmt(position + seconds) + ' · koniec zakresu ' + fmt(start + length);
   });
   function captionBusy(busy) {
     generating = busy;
-    for (const el of captionDialog.querySelectorAll('input, select, button')) {
-      if (el.id !== 'captions-close') el.disabled = busy;
-    }
+    $('#captions-form').disabled = busy;
     $('#captions-close').setAttribute('aria-label', busy ? 'Anuluj generowanie' : 'Zamknij napisy');
   }
   $('#captions-generate').onclick = async () => {
     if (!cur || generating) return;
+    await returnPlayback?.paused;
+    if (!cur || generating || !captionDialog.open) return;
     const key = $('#captions-key').value.trim();
-    if (!key) { captionStatus.textContent = 'Wklej klucz z konta Groq.'; $('#captions-key').focus(); return; }
+    const method = $('#captions-engine').value;
+    if (method === 'groq' && !key) { captionStatus.textContent = 'Wklej klucz z konta Groq.'; $('#captions-key').focus(); return; }
     const c = cur, session = captionSession, range = $('#captions-range').value;
     const start = range === 'all' ? 0 : playbackTime();
     const length = Math.min(playbackDuration() - start, range === 'all' ? Infinity : Number(range));
@@ -747,7 +857,7 @@
     if (resumeLocal) video.pause();
     captionBusy(true);
     try {
-      const { cues, warning } = await window.kadr.generateCaptions({ id: remote?.id, file: c.item.path, stream: engine.sel.audio?.index, start, length, key });
+      const { cues, warning } = await window.kadr.generateCaptions({ id: remote?.id, file: c.item.path, stream: engine.sel.audio?.index, start, length, engine: method, key: method === 'groq' ? key : undefined });
       if (cur !== c || session !== captionSession || !captionDialog.open) return;
       if (!cues.length) { captionStatus.textContent = 'W tym fragmencie nie rozpoznano mowy.'; return; }
       const label = 'Whisper · ' + fmt(start) + ' – ' + fmt(warning ? cues[cues.length - 1].end : start + length);
@@ -763,34 +873,17 @@
       if (cur === c && session === captionSession) captionStatus.textContent = captionError(e);
     } finally {
       captionBusy(false);
+      $('#captions-progress').hidden = true;
       if (resumeLocal && cur === c) video.play().catch(() => {});
     }
   };
   $('#captions-save').onclick = async () => {
     if (!cur?.generated?.length) return;
-    const stamp = seconds => {
-      const ms = Math.round(seconds * 1000);
-      const pad = n => String(n).padStart(2, '0');
-      return pad(Math.floor(ms / 3600000)) + ':' + pad(Math.floor(ms / 60000) % 60) + ':' + pad(Math.floor(ms / 1000) % 60) + ',' + String(ms % 1000).padStart(3, '0');
-    };
-    const text = cur.generated.map((c, i) => (i + 1) + '\r\n' + stamp(c.start) + ' --> ' + stamp(c.end) + '\r\n' + c.text + '\r\n').join('\r\n');
+    const text = K.exportSrt(cur.generated, cur.subDelay || 0);
     try { await window.kadr.saveCaptions(cur.item.title || 'Napisy', text); }
     catch (e) { captionStatus.textContent = captionError(e); }
   };
 
-  function subsMenu() {
-    if (!cur || !cur.info) return [mk('Brak pliku', null, { enabled: false })];
-    const items = [radio('Wyłączone', cur.subSel < 0, () => selectSub(-1))];
-    cur.subTracks.forEach((t, i) => items.push(radio(t.label, cur.subSel === i, () => selectSub(i))));
-    items.push(sep, mk('Wczytaj z pliku…', async () => { const f = await window.kadr.openSubtitle(); if (f) addExternalSub(f, true); }));
-    items.push(mk(`Przesunięcie: ${(cur.subDelay || 0).toFixed(1)} s`, null, { submenu: [
-      mk('Wcześniej o 0,1 s (Z)', () => subDelay(-0.1)), mk('Później o 0,1 s (X)', () => subDelay(0.1)),
-      mk('Wcześniej o 1 s', () => subDelay(-1)), mk('Później o 1 s', () => subDelay(1)), mk('Zeruj', () => subDelay(-(cur.subDelay || 0))),
-    ] }));
-    if (!/^https?:/i.test(cur.item.path) && cur.info.audio.length) items.push(mk('Generuj napisy z dźwięku…', () => openCaptions(true)));
-    items.push(mk('Wygląd napisów…', () => openPanel('subs')));
-    return items;
-  }
   function chaptersMenu() {
     const ch = (cur && cur.info && cur.info.chapters) || [];
     const t = video.currentTime;
@@ -803,7 +896,7 @@
       mk('Otwórz pliki…', openFiles, { accelerator: 'Ctrl+O' }),
       mk('Otwórz folder…', openFolder, { accelerator: 'Ctrl+Shift+O' }),
       mk('Otwórz adres URL…', openUrl, { accelerator: 'Ctrl+U' }),
-      mk('Filmy i seriale…', openCatalog, { accelerator: 'Ctrl+K' }),
+      mk('Katalog Kadr…', openCatalog, { accelerator: 'Ctrl+K' }),
       mk('Ostatnio otwierane', null, { submenu: ST.recent.length ? ST.recent.slice(0, 15).map(r => mk(r.title || baseName(r.path), () => openRecent(r))) : [mk('(pusto)', null, { enabled: false })] }),
       sep,
       mk(has && !playbackPaused() ? 'Pauza' : 'Odtwórz', togglePlay, { enabled: has, accelerator: 'Space' }),
@@ -813,7 +906,7 @@
       sep,
     ];
     if (cur?.item.catalog) {
-      items.push(mk('Napisy…', openCaptions, { enabled: !!remote?.ready }));
+      items.push(mk('Napisy Kadr…', openCaptions, { enabled: !!remote?.ready }));
       items.splice(6, 0, mk('Wróć do katalogu', returnToCatalog, { accelerator: 'Esc' }));
       items.push(mk(S.muted ? 'Włącz dźwięk' : 'Wycisz', () => $('#b-mute').click(), { accelerator: 'M' }));
       items.push(check('Pełny ekran', app.classList.contains('fullscreen'), () => window.kadr.fullscreen(), 'F'));
@@ -823,7 +916,7 @@
       return items;
     }
     items.push(mk('Dźwięk', null, { submenu: audioMenu(), enabled: has }));
-    items.push(mk('Napisy', null, { submenu: subsMenu(), enabled: has }));
+    items.push(mk('Napisy Kadr…', openCaptions, { enabled: has }));
     if (has && cur.info && cur.info.chapters.length) items.push(mk('Rozdziały', null, { submenu: chaptersMenu() }));
     items.push(mk('Prędkość', null, { submenu: speedMenu(), enabled: has }));
     items.push(mk('Obraz', null, { enabled: vid, submenu: [
@@ -956,6 +1049,7 @@
     if (!cur) return;
     cur.subDelay = Math.round(((cur.subDelay || 0) + d) * 10) / 10;
     subsView.key = '\u0000';
+    captionAppearance();
     osd(`Opóźnienie napisów ${cur.subDelay > 0 ? '+' : ''}${cur.subDelay.toFixed(1)} s`);
   }
   function cycleSub() {
@@ -1104,7 +1198,7 @@
     app.classList.add('empty');
     app.classList.remove('audio-only', 'error', 'waiting', 'catalog-selection');
     $('#title-text').textContent = '';
-    window.kadr.title('Kadr Player');
+    window.kadr.title('Kadr');
     window.kadr.powerBlock(false);
     renderRecent();
   }
@@ -1142,7 +1236,7 @@
     app.classList.remove('empty', 'error', 'audio-only');
     app.classList.add('waiting');
     $('#title-text').textContent = item.title;
-    window.kadr.title(`${item.title} — Kadr Player`);
+    window.kadr.title(`${item.title} — Kadr`);
     let start = opts.start || 0;
     const res = ST.resume[resumeKey(item.path)];
     if (!opts.start && S.resume && res && res.t > 10) { start = res.t; c.resumed = true; }
@@ -1204,7 +1298,7 @@
   engine.on('page-search', () => osd('To strona WWW — szukam na niej filmu…', '', 8000));
   engine.on('page-found', ({ url, title }) => {
     if (!cur) return;
-    if (title) { cur.item.title = title; $('#title-text').textContent = title; window.kadr.title(`${title} — Kadr Player`); }
+    if (title) { cur.item.title = title; $('#title-text').textContent = title; window.kadr.title(`${title} — Kadr`); }
     const r = ST.recent.find(x => x.path === cur.item.path); if (r && title) { r.title = title; saveState(); }
     osd('Znaleziono film na stronie', baseName(url), 2500);
   });
@@ -1273,7 +1367,7 @@
     if (PIPELINE.includes(key)) { clearTimeout(replanTimer); replanTimer = setTimeout(() => engine.replan(), 350); }
     if (SOUND.includes(key)) applySound();
     if (key === 'eqPreset' && K.EQ_PRESETS[val]) { S.eq = K.EQ_PRESETS[val].g.slice(); applySound(); }
-    if (SUBSTYLE.includes(key)) applySubStyle();
+    if (SUBSTYLE.includes(key)) { applySubStyle(); captionAppearance(); }
     if (key === 'smooth') applySound();
     if (key === 'sink') sound.setSink(val);
     if (key === 'volumeMax') { S.volume = Math.min(S.volume, +val); applyVolume(); }
@@ -1344,7 +1438,7 @@
   function renderAbout(body) {
     const d = document.createElement('div');
     d.innerHTML = `
-      <div class="about-head"><img src="img/logo.svg" alt=""><div><h3>Kadr Player</h3><span>wersja ${esc(cfg.version)}</span></div></div>
+      <div class="about-head"><img src="img/logo.svg" alt=""><div><h3>Kadr</h3><span>wersja ${esc(cfg.version)}</span></div></div>
       <div class="info-box">Odtwarzacz wideo na Windows: każdy format dzięki <b>FFmpeg</b>, skalowanie Lanczos/Spline z poprawnym pomniejszaniem, wyostrzanie AMD RCAS, usuwanie pasm, płynny ruch, korektor dźwięku i napisy w polskich formatach.</div>
       <div class="sec">Sponsorzy</div>
       <a class="sp-card pz" data-sp="pz"><img src="img/prozlecenie.png" alt=""><div><b>ProZlecenie.pl</b><small>Opisz robotę budowlaną lub remontową — fachowcy z Twojej okolicy sami zgłoszą się z ceną. Za darmo.</small></div><span class="go">Odwiedź →</span></a>
@@ -1361,7 +1455,7 @@
         <kbd>M</kbd><span>wycisz</span>
         <kbd>V / B</kbd><span>następne napisy / ścieżka dźwiękowa</span>
         <kbd>Z / X</kbd><span>napisy wcześniej / później</span>
-        <kbd>S</kbd><span>zrzut klatki (Obrazy\\Kadr Player)</span>
+        <kbd>S</kbd><span>zrzut klatki (Obrazy\\Kadr)</span>
         <kbd>C</kbd><span>usuń czarne pasy</span>
         <kbd>A</kbd><span>przełącz proporcje</span>
         <kbd>R</kbd><span>obróć o 90°</span>
@@ -1379,7 +1473,7 @@
       </div>
       <div class="sec">Technika</div>
       <div class="info-box" id="tech-info">…</div>
-      <div class="info-box">Kadr Player zawiera FFmpeg (licencja GPL v3, ffmpeg.org) oraz ikony Lucide (ISC). Inter — SIL Open Font License.</div>`;
+      <div class="info-box">Kadr zawiera FFmpeg (licencja GPL v3, ffmpeg.org) oraz ikony Lucide (ISC). Inter — SIL Open Font License.</div>`;
     body.appendChild(d);
     d.querySelectorAll('[data-sp]').forEach(a => { a.onclick = e => { e.preventDefault(); window.kadr.external(SPONSORS[a.dataset.sp]); }; });
     (async () => {

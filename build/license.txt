@@ -1,13 +1,13 @@
-﻿KADR PLAYER — WARUNKI UŻYTKOWANIA
+﻿KADR — WARUNKI UŻYTKOWANIA
 ================================
 
-Kadr Player jest programem darmowym (freeware). Możesz go instalować i używać
+Kadr jest programem darmowym (freeware). Możesz go instalować i używać
 bez opłat na dowolnej liczbie komputerów, prywatnie i w firmie.
 
 Program dostarczany jest „tak jak jest”, bez jakichkolwiek gwarancji. Autor nie
 odpowiada za szkody wynikłe z używania programu.
 
-Kadr Player wspierają sponsorzy: ProZlecenie.pl i CyberScope.pl. Linki do ich
+Kadr wspierają sponsorzy: ProZlecenie.pl i CyberScope.pl. Linki do ich
 stron znajdują się w instalatorze i w oknie „O programie”; program nie wyświetla
 reklam podczas oglądania i nie zbiera żadnych danych.
 

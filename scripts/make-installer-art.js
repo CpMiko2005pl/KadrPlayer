@@ -29,7 +29,7 @@ app.whenReady().then(async () => {
   const win = new BrowserWindow({ show: false, webPreferences: { offscreen: true } });
   await win.loadURL('data:text/html,<html><body></body></html>');
   const js = code => win.webContents.executeJavaScript(code);
-  const fdir = 'node_modules/@fontsource/inter/files';
+  const fdir = 'src/fonts';
   const fonts = [400, 600, 800].flatMap(w => [[w, read64(`${fdir}/inter-latin-${w}-normal.woff2`, 'font/woff2'), 'U+0000-00FF'], [w, read64(`${fdir}/inter-latin-ext-${w}-normal.woff2`, 'font/woff2'), 'U+0100-02FF']]);
   await js(`(async () => {
     for (const [w, src, range] of ${JSON.stringify(fonts)}) document.fonts.add(await new FontFace('ArtInter', 'url(' + src + ')', { weight: String(w), unicodeRange: range }).load());
@@ -54,7 +54,7 @@ app.whenReady().then(async () => {
     const glow = (x, y, r, c) => { const rg = g.createRadialGradient(x, y, 0, x, y, r); rg.addColorStop(0, c); rg.addColorStop(1, 'rgba(0,0,0,0)'); g.fillStyle = rg; g.fillRect(0, 0, W, H); };
     glow(82, 60, 120, 'rgba(255,95,69,.42)'); glow(160, 200, 110, 'rgba(230,51,111,.22)');
     g.shadowColor = 'rgba(255,95,69,.7)'; g.shadowBlur = 18; g.drawImage(ICON, 46, 22, 72, 72); g.shadowColor = 'transparent';
-    g.textAlign = 'center'; g.fillStyle = '#fff'; g.font = '800 21px ArtInter'; g.fillText('Kadr Player', W / 2, 122);
+    g.textAlign = 'center'; g.fillStyle = '#fff'; g.font = '800 21px ArtInter'; g.fillText('Kadr', W / 2, 122);
     g.fillStyle = 'rgba(238,235,240,.75)'; g.font = '600 10.5px ArtInter'; g.fillText('Każdy format.', W / 2, 144); g.fillText('Najlepsza jakość.', W / 2, 158);
     g.fillStyle = 'rgba(255,255,255,.14)'; g.fillRect(16, 182, W - 32, 1);
     g.fillStyle = '#ffb03a'; g.font = '800 9px ArtInter'; g.fillText('S P O N S O R Z Y', W / 2, 202);
@@ -69,7 +69,7 @@ app.whenReady().then(async () => {
   await save('installerHeader.bmp', 150, 57, `(g, W, H) => {
     g.fillStyle = '#ffffff'; g.fillRect(0, 0, W, H);
     g.drawImage(ICON, W - 50, 8, 40, 40);
-    g.textAlign = 'right'; g.fillStyle = '#1a1016'; g.font = '800 15px ArtInter'; g.fillText('Kadr', W - 58, 26); g.fillText('Player', W - 58, 43);
+    g.textAlign = 'right'; g.fillStyle = '#1a1016'; g.font = '800 15px ArtInter'; g.fillText('Kadr', W - 58, 33);
   }`);
 
   const card = (file, tile, colors, name, lines, cta, ctaColors) => save(file, 440, 80, `(g, W, H) => {

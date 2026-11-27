@@ -1,51 +1,165 @@
 const { execFile } = require('node:child_process');
 
 // This function runs inside the playback frame. Credentials stay in the local app.
-function movieCaptions(action, value) {
+async function movieCaptions(action, value) {
   const video = document.querySelector('video[data-kadr-film]');
   if (!video) return null;
-  const providerButton = document.querySelector('#ccBtn');
-  const providerLayer = document.querySelector('.jw-subs');
+  const state = video.kadrCaptions ||= { size: 5.2, bg: 0, delay: 0, times: new WeakMap(), generation: 0 };
   const tracks = Array.from(video.textTracks).filter(t => ['captions', 'subtitles'].includes(t.kind));
-  const providerMenu = () => [...document.querySelectorAll('.jw-menu')].find(el => el.querySelector('.jw-select,.jw-tabs'));
-  const reveal = el => {
-    if (!el) return;
-    for (const name of ['visibility', 'opacity', 'pointer-events']) el.style.removeProperty(name);
-    el.style.setProperty('z-index', '2147483647', 'important');
-  };
-  if (action === 'list') return {
-    provider: !!(providerButton && providerLayer),
-    providerOn: !!(providerLayer && providerLayer.style.visibility !== 'hidden' && providerButton?.classList.contains('active')),
-    tracks: tracks.map((t, i) => ({ label: (t.label || t.language || 'Napisy ' + (i + 1)).slice(0, 180), active: t.mode === 'showing' }))
-  };
-  if (action === 'init') { reveal(providerLayer); return; }
-  if (action === 'provider') {
-    if (!providerButton || !providerLayer) return false;
-    for (const t of tracks) t.mode = 'disabled';
-    reveal(providerLayer);
-    if (!providerMenu()?.classList.contains('is-open')) providerButton.click();
-    const menu = providerMenu();
-    reveal(menu);
-    return !!menu;
+  const cc = document.querySelector('#ccBtn');
+  const layer = document.querySelector('.jw-subs');
+  const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+  const menus = () => Array.from(document.querySelectorAll('.jw-menu'));
+  function languageMenu() {
+    let menu = menus().find(el => el.querySelector('.jw-select'));
+    if (cc && !menu?.classList.contains('is-open')) {
+      cc.click();
+      menu = menus().find(el => el.querySelector('.jw-select'));
+    }
+    return menu;
+  }
+  const closeMenu = () => menus().find(el => el.classList.contains('is-open') && el.querySelector('.jw-select'))?.querySelector('.jw-menu-close')?.click();
+  function styleTrack(track) {
+    if (!track?.cues) return;
+    for (const cue of Array.from(track.cues)) {
+      const times = state.times.get(cue) || [cue.startTime, cue.endTime];
+      state.times.set(cue, times);
+      cue.startTime = Math.max(0, times[0] + state.delay);
+      cue.endTime = Math.max(0, times[1] + state.delay);
+    }
+  }
+  if (action === 'init') {
+    const css = document.createElement('style');
+    css.id = 'kadr-caption-style';
+    document.head.append(css);
+    video.addEventListener('load', event => { if (event.target.track?.mode === 'showing') styleTrack(event.target.track); }, true);
+    css.textContent = '.jw-menu:has(.jw-select),.jw-menu:has(.jw-tabs){display:none!important}';
+    return true;
+  }
+  if (action === 'style') {
+    state.size = Math.max(2.5, Math.min(10, +value.size));
+    state.bg = Math.max(0, Math.min(1, +value.bg));
+    state.delay = Number(value.delay) || 0;
+    document.getElementById('kadr-caption-style').textContent =
+      '.jw-menu:has(.jw-select),.jw-menu:has(.jw-tabs){display:none!important}' +
+      'video::cue{font-size:' + state.size + 'vh;background-color:rgba(0,0,0,' + state.bg + ');color:white;text-shadow:0 1px 3px black,1px 0 2px black}';
+    for (const track of tracks) if (track.mode === 'showing') styleTrack(track);
+    return true;
+  }
+  if (action === 'list') {
+    const menu = languageMenu();
+    const langs = Array.from(menu?.querySelector('.jw-select')?.options || [])
+      .filter(o => o.value && !o.disabled).map(o => ({ code: o.value, label: o.label }));
+    return { langs, tracks: tracks.map((t, index) => ({ index, label: t.label || 'Ścieżka ' + (index + 1),
+      lang: t.language, active: t.mode === 'showing', source: t.kadrSource || null })) };
+  }
+  const rows = menu => Array.from(menu?.querySelectorAll('.jw-result') || []);
+  if (action === 'versions') {
+    const generation = ++state.generation;
+    const menu = languageMenu(), select = menu?.querySelector('.jw-select');
+    if (!select || !Array.from(select.options).some(o => o.value === value)) return [];
+    const changed = select.value !== value;
+    const before = changed ? rows(menu) : [];
+    if (changed || !rows(menu).length) {
+      select.value = value;
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    for (let n = 0; n < 50; n++) {
+      if (state.generation !== generation) return [];
+      const entries = rows(menu);
+      if (entries.length && !entries.some(el => before.includes(el))) {
+        state.entries = entries;
+        return entries.map((el, i) => ({ index: i, label: (el.textContent.trim() || 'Wersja ' + (i + 1)).slice(0, 240) }));
+      }
+      await sleep(150);
+    }
+    state.entries = [];
+    return [];
+  }
+  if (action === 'dismiss') { ++state.generation; closeMenu(); return true; }
+  if (action === 'apply') {
+    const entry = state.entries?.[value.index];
+    if (!entry?.isConnected || languageMenu()?.querySelector('.jw-select')?.value !== value.lang) throw Error('Odśwież listę wersji napisów.');
+    // The provider loads the selected file itself. Reuse the timed text it decodes.
+    const previousFetch = window.fetch;
+    let complete;
+    const loaded = new Promise(resolve => { complete = resolve; });
+    function inspect(payload) {
+      if (typeof payload === 'string') {
+        if (/^\s*(WEBVTT|\[Script Info\])/i.test(payload) || /^[\s\S]{0,3000}\d{2}:\d{2}[\s\S]{0,24}-->/.test(payload)) complete({ body: payload });
+        return;
+      }
+      if (Array.isArray(payload)) {
+        const cues = payload.filter(c => typeof c?.text === 'string' && Number.isFinite(c.start) && Number.isFinite(c.end) && c.end > c.start);
+        if (cues.length) complete({ cues });
+      } else if (payload && typeof payload === 'object') {
+        for (const key of ['srt', 'vtt', 'content', 'cues', 'subtitles', 'data']) if (payload[key]) inspect(payload[key]);
+      }
+    }
+    async function inspectResponse(response) {
+      const type = response.headers.get('content-type') || '';
+      if (!response.ok || Number(response.headers.get('content-length')) > 8000000 ||
+          !(/text|subrip|vtt|json/i.test(type) || /\.(vtt|srt|ass)(\?|$)/i.test(response.url))) return;
+      const reader = response.clone().body?.getReader();
+      if (!reader) return;
+      const decoder = new TextDecoder();
+      let body = '', length = 0;
+      while (true) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        length += chunk.value.length;
+        if (length > 8000000) { void reader.cancel(); return; }
+        body += decoder.decode(chunk.value, { stream: true });
+      }
+      body += decoder.decode();
+      if (/^\s*[\[{]/.test(body) && !/^\s*\[Script Info\]/i.test(body)) inspect(JSON.parse(body));
+      else inspect(body);
+    }
+    async function fetchSelection(...args) {
+      const response = await previousFetch.apply(this, args);
+      // Some players serve subtitle files as generic binary data, then call text() or json().
+      // Observe their decoded value without consuming the original response stream.
+      for (const method of ['text', 'json']) {
+        const decode = response[method].bind(response);
+        response[method] = async () => {
+          const result = await decode();
+          if (typeof result !== 'string' || result.length <= 8000000) inspect(result);
+          return result;
+        };
+      }
+      void inspectResponse(response).catch(() => {});
+      return response;
+    }
+    window.fetch = fetchSelection;
+    let timer;
+    try {
+      entry.click();
+      const result = await Promise.race([loaded, new Promise(done => { timer = setTimeout(() => done(null), 8000); })]);
+      if (result) return result;
+      const track = Array.from(video.textTracks).find(t => t.mode === 'showing' && t.cues?.length && !tracks.includes(t));
+      if (track) { styleTrack(track); return { native: true }; }
+      throw Error('Odtwarzacz nie udostępnił treści tej wersji napisów.');
+    } finally {
+      clearTimeout(timer);
+      if (window.fetch === fetchSelection) window.fetch = previousFetch;
+      closeMenu();
+    }
   }
   let selected;
   if (action === 'select') selected = tracks[value];
   else if (action === 'add') {
-    if (!value.cues.length) return false;
-    const label = value.label.slice(0, 180);
-    selected = video.addTextTrack('subtitles', label);
+    if (!value.cues?.length) return false;
+    selected = video.addTextTrack('subtitles', value.label.slice(0, 240), value.lang || '');
+    selected.kadrSource = value.source || null;
     selected.mode = 'hidden';
-    for (const { start, end, text } of value.cues) {
-      if (Number.isFinite(start) && Number.isFinite(end) && end > start) selected.addCue(new VTTCue(start, end, text));
-    }
+    for (const c of value.cues) if (Number.isFinite(c.start) && Number.isFinite(c.end) && c.end > c.start) selected.addCue(new VTTCue(c.start, c.end, c.text));
   } else return false;
-  if (providerLayer) providerLayer.style.setProperty('visibility', 'hidden', 'important');
-  if (providerMenu()?.classList.contains('is-open')) providerMenu().querySelector('.jw-menu-close')?.click();
-  for (const track of tracks) track.mode = track === selected ? 'showing' : 'disabled';
-  if (selected) selected.mode = 'showing';
+  closeMenu();
+  if (layer) layer.style.setProperty('visibility', 'hidden', 'important');
+  for (const t of tracks) t.mode = t === selected ? 'showing' : 'disabled';
+  if (selected) { selected.mode = 'showing'; styleTrack(selected); }
   return true;
 }
-
 // Capture only the selected video's audio, using the browser's media permissions.
 async function captureMovieAudio(start, length) {
   const v = document.querySelector('video[data-kadr-film]');

@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: http://127.0.0.1:* https://image.tmdb.org; media-src 'self' blob: http://127.0.0.1:*; connect-src http://127.0.0.1:*; font-src 'self' data:; worker-src 'self' blob:">
-  <title>Kadr Player</title>
+  <title>Kadr</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -29,24 +29,24 @@
     <section id="welcome">
       <div class="hero">
         <img class="logo" src="img/logo.svg" alt="">
-        <h1>Kadr Player</h1>
+        <h1>Kadr</h1>
         <p class="tagline">Odtwarza każdy format — w najlepszej jakości, jaką da się wycisnąć z Twojego ekranu.</p>
         <div class="hero-actions">
           <button class="btn primary" data-act="open-files"></button>
           <button class="btn" data-act="open-folder"></button>
           <button class="btn" data-act="open-url"></button>
-          <button class="btn" data-act="open-catalog">Filmy i seriale</button>
+          <button class="btn" data-act="open-catalog">Katalog Kadr</button>
         </div>
         <p class="hint">albo przeciągnij tu pliki lub folder</p>
       </div>
       <section id="home-films" aria-labelledby="home-films-title" hidden>
-        <div class="home-films-head"><h2 id="home-films-title">Na czasie w HydraHD</h2><button class="btn small" data-act="open-popular">Zobacz więcej</button></div>
+        <div class="home-films-head"><h2 id="home-films-title">Na czasie w Kadr</h2><button class="btn small" data-act="open-popular">Zobacz więcej</button></div>
         <div id="home-film-grid"></div>
         <p id="home-film-status" role="status"></p>
       </section>
       <div id="recent"></div>
       <div class="sponsors-strip">
-        <span class="sp-label">Kadr Player wspierają</span>
+        <span class="sp-label">Kadr wspierają</span>
         <a class="sp" data-href="https://prozlecenie.pl/?utm_source=kadr-player&amp;utm_medium=app" href="#">
           <img src="img/prozlecenie.png" alt=""><span><b>ProZlecenie.pl</b><small>fachowcy z Twojej okolicy</small></span>
         </a>
@@ -79,7 +79,7 @@
       </div>
       <div class="grp right">
         <button id="b-speed" class="cb txt" data-tip="Prędkość ([ ])">1×</button>
-        <button id="b-subs" class="cb" data-tip="Napisy (V)"></button>
+        <button id="b-subs" class="cb" aria-label="Napisy Kadr" data-tip="Napisy Kadr"></button>
         <button id="b-audio" class="cb" data-tip="Ścieżka dźwiękowa (B)"></button>
         <button id="b-shot" class="cb" data-tip="Zrzut klatki (S)"></button>
         <button id="b-settings" class="cb" data-tip="Ustawienia obrazu i dźwięku (Ctrl+,)"></button>
@@ -117,23 +117,37 @@
 
   <div id="tooltip"></div>
   <dialog id="captions-dialog" aria-labelledby="captions-title">
-    <header><h2 id="captions-title">Napisy</h2><button id="captions-close" class="cb" type="button" aria-label="Zamknij napisy">×</button></header>
-    <div id="captions-tracks"></div>
-    <div class="caption-actions"><button id="captions-provider" class="btn" hidden>Wybierz napisy z HydraHD…</button><button id="captions-file" class="btn">Wczytaj plik napisów…</button></div>
+    <header><h2 id="captions-title">Napisy Kadr</h2><button id="captions-close" class="cb" aria-label="Wróć do filmu">×</button></header>
+    <fieldset id="captions-form" aria-label="Ustawienia napisów">
+    <p id="captions-active" role="status"></p>
+    <div class="caption-grid">
+      <label>Język<select id="captions-lang"></select></label>
+      <label>Wersja<select id="captions-version"></select></label>
+    </div>
+    <div class="caption-actions"><button id="captions-file" class="btn">Wczytaj plik…</button><button id="captions-off" class="btn ghost">Wyłącz napisy</button></div>
+    <div id="captions-preview"><span>Tak wyglądają napisy.</span></div>
+    <div class="caption-grid">
+      <label>Rozmiar <input id="captions-size" type="range" min="2.5" max="10" step="0.1"></label>
+      <label>Tło <input id="captions-bg" type="range" min="0" max="1" step="0.05"></label>
+      <label>Opóźnienie (s)<input id="captions-delay" type="number" min="-600" max="600" step="0.1" value="0"></label>
+    </div>
     <details id="captions-ai">
-      <summary>Generuj napisy z dźwięku</summary>
-      <p id="captions-help"></p>
-      <label>Klucz API Groq <input id="captions-key" type="password" autocomplete="off" spellcheck="false"></label>
-      <button id="captions-get-key" class="btn ghost">Otwórz stronę kluczy Groq ↗</button>
+      <summary>Generowanie napisów</summary>
+      <label>Rozpoznawanie mowy<select id="captions-engine"><option value="local">Lokalnie · Whisper</option><option value="groq">W chmurze · Groq</option></select></label>
+      <div id="captions-cloud" hidden><label>Klucz API Groq <input id="captions-key" type="password" autocomplete="off" spellcheck="false"></label>
+      <button id="captions-get-key" class="btn ghost">Strona kluczy Groq ↗</button></div>
       <label>Zakres <select id="captions-range"><option value="60">Minuta od bieżącej pozycji</option><option value="300">5 minut od bieżącej pozycji</option><option value="all">Cały film</option></select></label>
-      <button id="captions-generate" class="btn primary">Wyślij dźwięk i wygeneruj</button>
     </details>
-    <button id="captions-save" class="btn" hidden>Zapisz wygenerowane napisy jako SRT…</button>
+    <p id="captions-help"></p>
+    <button id="captions-generate" class="btn primary">Wygeneruj napisy</button>
+    <button id="captions-save" class="btn" hidden>Zapisz SRT…</button>
+    <progress id="captions-progress" aria-label="Pobieranie modelu" hidden></progress>
+    </fieldset>
     <p id="captions-status" role="status"></p>
   </dialog>
   <dialog id="catalog" aria-labelledby="catalog-title">
     <header class="catalog-head">
-      <div><small>HydraHD</small><h2 id="catalog-title">Filmy i seriale</h2></div>
+      <div><small>Katalog Kadr</small><h2 id="catalog-title">Filmy i seriale</h2></div>
       <button id="catalog-close" class="cb" type="button" aria-label="Zamknij katalog" title="Zamknij katalog"></button>
     </header>
     <form id="catalog-search" role="search">

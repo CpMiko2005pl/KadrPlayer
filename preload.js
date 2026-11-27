@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld('kadr', {
   probe: call('media:probe'),
   findInPage: call('media:find-in-page'),
   listMovies: call('catalog:list'),
+  captionModelReady: call('captions:model-ready'),
   generateCaptions: call('captions:generate'),
   cancelCaptions: call('captions:cancel'),
   saveCaptions: call('captions:save'),

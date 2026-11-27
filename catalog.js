@@ -80,7 +80,7 @@ async function fetchCatalog({ section, query, page, genre, sort }) {
 
 async function readCatalogHtml(status, type, body) {
   if (status < 200 || status >= 300 || !type?.includes('text/html') || !body) {
-    throw new Error('HydraHD nie udostępnił katalogu (HTTP ' + status + ').');
+    throw new Error('Nie udało się pobrać katalogu Kadr (HTTP ' + status + ').');
   }
   const chunks = [];
   let size = 0;
@@ -240,7 +240,7 @@ async function movieAction(id, action, value) {
   if (action === 'bounds') { positionMovie(p, value); return null; }
   if (action === 'visible') { p.view.setVisible(value === true); return null; }
   if (!p.frame) return null;
-  if (action === 'caption-list' || action === 'caption-provider' || action === 'caption-select' || action === 'caption-add') {
+  if (action === 'caption-list' || ['caption-versions', 'caption-style', 'caption-apply', 'caption-dismiss'].includes(action) || action === 'caption-select' || action === 'caption-add') {
     return p.frame.executeJavaScript(`(${movieCaptions})(${JSON.stringify(action.slice(8))},${JSON.stringify(value)})`, true);
   }
   if (action === 'capture' && Number.isFinite(value?.start) && value.seconds > 0 && value.seconds <= 300) {
@@ -249,6 +249,8 @@ async function movieAction(id, action, value) {
   if (action === 'capture-cancel') return p.frame.executeJavaScript("void dispatchEvent(new Event('kadr-stop-capture'))");
   let change = '';
   if (action === 'toggle') change = "if(v.paused) void v.play().catch(()=>{}); else v.pause();";
+  else if (action === 'pause') change = "v.pause();";
+  else if (action === 'play') change = "void v.play().catch(()=>{});";
   else if (action === 'seek' && Number.isFinite(value)) change = `if(Number.isFinite(v.duration)) v.currentTime=Math.max(0,Math.min(v.duration,${value}));`;
   else if (action === 'volume' && Number.isFinite(value)) change = `v.volume=${Math.max(0,Math.min(1,value))}; v.muted=v.volume===0;`;
   else if (action !== 'status') return null;

@@ -10,8 +10,8 @@ exports.default = async function afterPack(context) {
   execFileSync(path.join(root, 'node_modules', 'rcedit', 'bin', 'rcedit-x64.exe'), [exe,
     '--set-icon', path.join(root, 'build', 'icon.ico'),
     '--set-version-string', 'ProductName', info.productName,
-    '--set-version-string', 'FileDescription', 'Kadr Player — odtwarzacz wideo',
-    '--set-version-string', 'CompanyName', 'Kadr Player (sponsorzy: ProZlecenie.pl, CyberScope.pl)',
+    '--set-version-string', 'FileDescription', 'Kadr — odtwarzacz wideo',
+    '--set-version-string', 'CompanyName', 'Kadr (sponsorzy: ProZlecenie.pl, CyberScope.pl)',
     '--set-version-string', 'LegalCopyright', 'Freeware',
     '--set-version-string', 'OriginalFilename', `${info.productFilename}.exe`,
     '--set-file-version', info.version, '--set-product-version', info.version]);

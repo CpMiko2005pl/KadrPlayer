@@ -1,4 +1,4 @@
-// Kadr Player — main process: window, settings, dialogs, menus, file associations, the media server
+// Kadr — main process: window, settings, dialogs, menus, file associations, the media server
 const { app, BrowserWindow, ipcMain, dialog, Menu, shell, screen, powerSaveBlocker, nativeTheme, clipboard } = require('electron');
 const fs = require('fs');
 const path = require('path');
@@ -14,6 +14,9 @@ const LIST_EXT = new Set(['m3u', 'm3u8', 'pls']);
 app.setAppUserModelId('fun.tacticalops.kadrplayer');
 nativeTheme.themeSource = 'dark';
 
+// Keep settings and resume positions from installations using the previous product name.
+const previousProfile = path.join(app.getPath('appData'), 'Kadr Player');
+if (path.basename(app.getPath('userData')) === 'Kadr' && fs.existsSync(previousProfile)) app.setPath('userData', previousProfile);
 const userDir = app.getPath('userData');
 const logFile = path.join(userDir, 'kadr.log');
 function log(...a) {
@@ -99,7 +102,7 @@ function createWindow() {
     width: b ? b.width : 1180, height: b ? b.height : 700, x: b ? b.x : undefined, y: b ? b.y : undefined,
     minWidth: 360, minHeight: 220,
     backgroundColor: '#07080b',
-    title: 'Kadr Player',
+    title: 'Kadr',
     icon: path.join(__dirname, 'build', 'icon.png'),
     titleBarStyle: 'hidden',
     titleBarOverlay: { color: '#00000000', symbolColor: '#d7dbe4', height: 38 },
@@ -180,20 +183,27 @@ handle('catalog:list', request => catalog.fetchCatalog(request));
 handle('catalog:series', url => catalog.fetchSeries(url));
 handle('catalog:play', (url, id, bounds, volume) => catalog.openMovie(win, url, id, bounds, volume));
 const captions = require('./captions');
+const whisper = require('./local-whisper');
+const modelDirectory = path.join(userDir, 'models');
+handle('captions:model-ready', () => whisper.modelReady(modelDirectory));
 let captionJob;
 function stopCaptionJob() {
   if (!captionJob) return;
-  captionJob.abort.abort();
+  const job = captionJob;
+  job.abort.abort();
   if (captionJob.id != null) void catalog.movieAction(captionJob.id, 'capture-cancel').catch(() => {});
+  return job.finished;
 }
 app.on('before-quit', stopCaptionJob);
 handle('captions:cancel', stopCaptionJob);
-handle('captions:generate', async ({ id, file, stream, start, length, key }) => {
+handle('captions:generate', async ({ id, file, stream, start, length, key, engine = 'local' }) => {
   if (captionJob) throw Error('Generowanie jest już uruchomione.');
-  if (typeof key !== 'string' || !/^[A-Za-z0-9_-]{12,250}$/.test(key)) throw Error('Wprowadź prawidłowy klucz API Groq.');
+  if (engine === 'groq' && (typeof key !== 'string' || !/^[A-Za-z0-9_-]{12,250}$/.test(key))) throw Error('Wprowadź prawidłowy klucz API Groq.');
   if (!Number.isFinite(start) || start < 0 || !Number.isFinite(length) || length <= 0 || length > 7 * 86400) throw Error('Nieprawidłowy zakres nagrania.');
   if (id == null && (!path.isAbsolute(file) || !fs.statSync(file).isFile())) throw Error('Wybierz lokalny plik multimedialny.');
   const job = captionJob = { id, abort: new AbortController() };
+  let finish;
+  job.finished = new Promise(resolve => { finish = resolve; });
   const signal = job.abort.signal;
   const cues = [];
   let previous;
@@ -202,6 +212,7 @@ handle('captions:generate', async ({ id, file, stream, start, length, key }) => 
       previous = await catalog.movieAction(id, 'status');
       if (!previous) throw Error('Odtwarzacz filmu jest niedostępny.');
     }
+    if (engine !== 'groq') await whisper.prepare(modelDirectory, signal, data => win.webContents.send('captions:progress', data));
     for (let position = start; position < start + length - 0.15;) {
       signal.throwIfAborted();
       const seconds = Math.min(id == null ? 300 : 60, start + length - position);
@@ -216,7 +227,8 @@ handle('captions:generate', async ({ id, file, stream, start, length, key }) => 
         end = clip.end;
       }
       signal.throwIfAborted();
-      const segments = await captions.transcribe(audio, id == null ? 'audio.mp3' : 'audio.webm', key, signal);
+      const segments = engine !== 'groq' ? await whisper.recognize(media.ffmpeg, modelDirectory, audio, signal)
+        : await captions.transcribe(audio, id == null ? 'audio.mp3' : 'audio.webm', key, signal);
       for (const s of segments) {
         const from = Math.max(offset, offset + s.start), to = Math.min(end, offset + s.end);
         if (to > from) cues.push({ start: from, end: to, text: s.text });
@@ -233,6 +245,7 @@ handle('captions:generate', async ({ id, file, stream, start, length, key }) => 
       if (state && state.paused !== previous.paused) await catalog.movieAction(id, 'toggle').catch(() => {});
     }
     captionJob = null;
+    finish();
   }
 });
 handle('captions:save', async (title, text) => {
@@ -323,7 +336,7 @@ handle('open:external', url => { openExternal(url); return true; });
 handle('clipboard:text', () => clipboard.readText());
 
 handle('screenshot:save', async ({ dataUrl, name }) => {
-  const dir = path.join(app.getPath('pictures'), 'Kadr Player');
+  const dir = path.join(app.getPath('pictures'), 'Kadr');
   fs.mkdirSync(dir, { recursive: true });
   const safe = String(name || 'kadr').replace(/[<>:"/\\|?*\x00-\x1f]+/g, '_').slice(0, 120);
   let file = path.join(dir, `${safe}.png`);

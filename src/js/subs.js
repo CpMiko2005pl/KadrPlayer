@@ -171,6 +171,22 @@ window.K = window.K || {};
     return out;
   };
 
+  K.exportSrt = function (cues, delay = 0) {
+    const stamp = seconds => {
+      const ms = Math.round(seconds * 1000);
+      const pad = n => String(n).padStart(2, '0');
+      return pad(Math.floor(ms / 3600000)) + ':' + pad(Math.floor(ms / 60000) % 60) + ':' + pad(Math.floor(ms / 1000) % 60) + ',' + String(ms % 1000).padStart(3, '0');
+    };
+    const blocks = [];
+    for (const cue of cues) {
+      const start = Math.max(0, cue.start + delay);
+      const end = cue.end + delay;
+      if (end <= start) continue;
+      blocks.push([blocks.length + 1, stamp(start) + ' --> ' + stamp(end), cue.text].join('\r\n'));
+    }
+    return blocks.join('\r\n\r\n') + '\r\n';
+  };
+
   // safe rendering of the markup subset
   function buildNodes(text, parent) {
     const stack = [parent];

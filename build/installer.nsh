@@ -1,4 +1,4 @@
-; Kadr Player — installer additions (electron-builder nsis.include)
+; Kadr — installer additions (electron-builder nsis.include)
 ; • welcome page with the sponsors (sidebar bitmap + text)
 ; • a "Sponsorzy" page after choosing the folder: two clickable sponsor cards
 ; • a sponsor link on the finish page
@@ -14,14 +14,14 @@
 !define MUI_FINISHPAGE_LINK_COLOR "E8452C"
 
 !macro customHeader
-  LangString kpWelcomeTitle ${LANG_POLISH} "Witaj w instalatorze Kadr Player"
-  LangString kpWelcomeTitle ${LANG_ENGLISH} "Welcome to Kadr Player Setup"
-  LangString kpWelcomeText ${LANG_POLISH} "Kadr Player odtwarza każdy format wideo i audio — MKV, MP4, AVI, WMV, MOV, TS, FLV, HEVC, AV1… — w najlepszej jakości: skalowanie Lanczos, wyostrzanie AMD RCAS, płynny ruch, korektor dźwięku i polskie napisy (SRT, MicroDVD, MPL2, ASS).$\r$\n$\r$\nInstalacja nie wymaga uprawnień administratora.$\r$\n$\r$\nProgram jest darmowy dzięki sponsorom: ProZlecenie.pl i CyberScope.pl. Dziękujemy!$\r$\n$\r$\nKliknij Dalej, aby kontynuować."
-  LangString kpWelcomeText ${LANG_ENGLISH} "Kadr Player plays every video and audio format — MKV, MP4, AVI, WMV, MOV, TS, FLV, HEVC, AV1… — in the best quality: Lanczos scaling, AMD RCAS sharpening, smooth motion, an equalizer and subtitles.$\r$\n$\r$\nNo administrator rights needed.$\r$\n$\r$\nIt is free thanks to its sponsors: ProZlecenie.pl and CyberScope.pl. Thank you!$\r$\n$\r$\nClick Next to continue."
-  LangString kpSponsorsTitle ${LANG_POLISH} "Sponsorzy Kadr Player"
-  LangString kpSponsorsTitle ${LANG_ENGLISH} "Kadr Player sponsors"
-  LangString kpSponsorsSub ${LANG_POLISH} "Kadr Player jest darmowy dzięki naszym sponsorom."
-  LangString kpSponsorsSub ${LANG_ENGLISH} "Kadr Player is free thanks to our sponsors."
+  LangString kpWelcomeTitle ${LANG_POLISH} "Witaj w instalatorze Kadr"
+  LangString kpWelcomeTitle ${LANG_ENGLISH} "Welcome to Kadr Setup"
+  LangString kpWelcomeText ${LANG_POLISH} "Kadr odtwarza każdy format wideo i audio — MKV, MP4, AVI, WMV, MOV, TS, FLV, HEVC, AV1… — w najlepszej jakości: skalowanie Lanczos, wyostrzanie AMD RCAS, płynny ruch, korektor dźwięku i polskie napisy (SRT, MicroDVD, MPL2, ASS).$\r$\n$\r$\nInstalacja nie wymaga uprawnień administratora.$\r$\n$\r$\nProgram jest darmowy dzięki sponsorom: ProZlecenie.pl i CyberScope.pl. Dziękujemy!$\r$\n$\r$\nKliknij Dalej, aby kontynuować."
+  LangString kpWelcomeText ${LANG_ENGLISH} "Kadr plays every video and audio format — MKV, MP4, AVI, WMV, MOV, TS, FLV, HEVC, AV1… — in the best quality: Lanczos scaling, AMD RCAS sharpening, smooth motion, an equalizer and subtitles.$\r$\n$\r$\nNo administrator rights needed.$\r$\n$\r$\nIt is free thanks to its sponsors: ProZlecenie.pl and CyberScope.pl. Thank you!$\r$\n$\r$\nClick Next to continue."
+  LangString kpSponsorsTitle ${LANG_POLISH} "Sponsorzy Kadr"
+  LangString kpSponsorsTitle ${LANG_ENGLISH} "Kadr sponsors"
+  LangString kpSponsorsSub ${LANG_POLISH} "Kadr jest darmowy dzięki naszym sponsorom."
+  LangString kpSponsorsSub ${LANG_ENGLISH} "Kadr is free thanks to our sponsors."
   LangString kpSponsorsText ${LANG_POLISH} "Kliknij kartę, aby otworzyć stronę sponsora w przeglądarce. Instalacja nie zostanie przerwana."
   LangString kpSponsorsText ${LANG_ENGLISH} "Click a card to open the sponsor's website in your browser. Setup will keep running."
   LangString kpFinishLink ${LANG_POLISH} "Sponsor: ProZlecenie.pl — fachowcy z Twojej okolicy"
