@@ -1,7 +1,8 @@
-const { WebContentsView, session, powerSaveBlocker, net } = require('electron');
+const { WebContentsView, ipcMain, screen, session, powerSaveBlocker, net } = require('electron');
 const { setTimeout: delay } = require('node:timers/promises');
 
 const { movieCaptions, captureMovieAudio } = require('./captions');
+const path = require('node:path');
 const origin = 'https://hydrahd.com';
 // The .com catalog redirects movie pages to a playback domain listed on hydrahd.info.
 const movieOrigins = new Set([origin, 'https://hydrahd.gd', 'https://hydrahd.ac', 'https://hydrahd.cc',
@@ -114,10 +115,49 @@ function showOnly(element) {
   return true;
 }
 
+function watchHiddenPointer(p) {
+  clearInterval(p.pointerTimer);
+  if (p.controls || !p.visible || p.providerMenu) return;
+  let previous = screen.getCursorScreenPoint();
+  p.pointerTimer = setInterval(() => {
+    if (!p.parent.isFocused()) return;
+    const point = screen.getCursorScreenPoint();
+    if (point.x === previous.x && point.y === previous.y) return;
+    previous = point;
+    const box = p.parent.getContentBounds();
+    if (point.x >= box.x && point.y >= box.y && point.x < box.x + box.width && point.y < box.y + box.height) {
+      p.parent.webContents.send('catalog:pointer');
+    }
+  }, 100);
+  p.pointerTimer.unref();
+}
+
+function syncSurface(p) {
+  // Windows can deliver movement to a native child without a Chromium pointer
+  // event. Sample only while hidden and send IPC only on actual movement.
+  watchHiddenPointer(p);
+  p.contents.send('catalog:surface', { id: p.id, enabled: !p.providerMenu, controls: p.controls });
+}
+
+const movieKeys = new Set([' ', 'Escape', 'Backspace', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'k', 'm', 'f', 'v', 'p']);
+
+ipcMain.on('catalog:input', (event, id, action, input) => {
+  const p = player;
+  if (!p?.attached || p.id !== id || event.sender !== p.contents || event.senderFrame !== p.contents.mainFrame || p.providerMenu || !p.visible) return;
+  if (action === 'key') {
+    if (movieKeys.has(input?.key)) {
+      p.parent.webContents.send('catalog:key', { key: input.key, shiftKey: input.shiftKey === true });
+    }
+  } else if (action === 'pointer') p.parent.webContents.send('catalog:pointer');
+  else if (action === 'contextmenu') p.parent.webContents.send('catalog:menu');
+  else if (action === 'click' || action === 'dblclick') p.parent.webContents.send('catalog:stage', action);
+});
+
 function closeMovie() {
   const p = player;
   if (!p) return;
   player = null;
+  clearInterval(p.pointerTimer);
   p.abort.abort();
   if (p.blocker !== undefined) powerSaveBlocker.stop(p.blocker);
   if (p.attached && !p.parent.isDestroyed()) p.parent.contentView.removeChildView(p.view);
@@ -129,8 +169,23 @@ function positionMovie(p, bounds) {
   const [w, h] = p.parent.getContentSize();
   const x = Math.max(0, Math.min(w - 1, Math.round(bounds.x)));
   const y = Math.max(0, Math.min(h - 1, Math.round(bounds.y)));
-  p.view.setBounds({ x, y, width: Math.max(1, Math.min(w - x, Math.round(bounds.width))),
-    height: Math.max(1, Math.min(h - y, Math.round(bounds.height))) });
+  const height = Math.max(1, Math.min(h - y, Math.round(bounds.height)));
+  p.view.setBounds({ x, y, width: Math.max(1, Math.min(w - x, Math.round(bounds.width))), height });
+  // The view exposes only the space between the bars. Size the film against
+  // the whole window so revealing the controls crops its edges without scaling.
+  p.filmRect = { top: y, width: w, height: h };
+  if (p.frame) return alignMovie(p);
+}
+
+function alignMovie(p) {
+  const { top, width, height } = p.filmRect;
+  return p.frame.executeJavaScript(`(() => {
+    const v = document.querySelector('video[data-kadr-film]');
+    if (!v) return;
+    v.style.setProperty('top', '-${top}px', 'important');
+    v.style.setProperty('width', '${width}px', 'important');
+    v.style.setProperty('height', '${height}px', 'important');
+  })()`);
 }
 
 async function prepareVideo(p) {
@@ -186,11 +241,11 @@ async function openMovie(parent, address, id, bounds, volume) {
   if (!url || !Number.isSafeInteger(id)) throw new Error('Nieprawidłowy film.');
   closeMovie();
   const view = new WebContentsView({
-    webPreferences: { session: getSession(), sandbox: true, contextIsolation: true, nodeIntegration: false,
+    webPreferences: { preload: path.join(__dirname, 'movie-input.js'), session: getSession(), sandbox: true, contextIsolation: true, nodeIntegration: false,
       backgroundThrottling: false, autoplayPolicy: 'no-user-gesture-required' }
   });
   const contents = view.webContents;
-  const p = player = { id, parent, view, contents, abort: new AbortController(), attached: false, frame: null };
+  const p = player = { id, parent, view, contents, controls: true, visible: true, providerMenu: false, abort: new AbortController(), attached: false, frame: null };
   view.setBackgroundColor('#000000');
   positionMovie(p, bounds);
   contents.setAudioMuted(true);
@@ -200,21 +255,15 @@ async function openMovie(parent, address, id, bounds, volume) {
   };
   contents.on('will-frame-navigate', restrictNavigation);
   contents.on('will-redirect', restrictNavigation);
-  contents.on('before-input-event', (event, key) => {
-    if (key.type === 'keyDown' && [' ', 'Escape', 'ArrowLeft', 'ArrowRight', 'm', 'f', 'Backspace', 'k', 'v'].includes(key.key)) {
-      event.preventDefault();
-      parent.webContents.send('catalog:key', { key: key.key, ctrlKey: key.control, shiftKey: key.shift, altKey: key.alt });
+  contents.on('before-input-event', (event, input) => {
+    if (!p.attached || !p.visible || p.providerMenu || input.type !== 'keyDown') return;
+    const key = input.key.length === 1 ? input.key.toLowerCase() : input.key;
+    if (!movieKeys.has(key) || input.isComposing || input.meta) return;
+    event.preventDefault();
+    if (!input.isAutoRepeat || key.startsWith('Arrow')) {
+      parent.webContents.send('catalog:key', { key, shiftKey: input.shift, ctrlKey: input.control, altKey: input.alt });
     }
   });
-  let lastMovement = 0;
-  contents.on('input-event', (_event, input) => {
-    const now = Date.now();
-    if (p.attached && input.type === 'mouseMove' && now - lastMovement >= 150) {
-      lastMovement = now;
-      parent.webContents.send('catalog:pointer');
-    }
-  });
-  contents.on('context-menu', () => { if (p.attached) parent.webContents.send('catalog:menu'); });
   const timeout = setTimeout(() => { if (player === p) closeMovie(); }, 50000);
   try {
     await startProvider(p, url);
@@ -222,7 +271,10 @@ async function openMovie(parent, address, id, bounds, volume) {
     if (player !== p || !p.frame) return false;
     await movieAction(id, 'volume', volume);
     if (player !== p) return false;
+    await alignMovie(p);
+    if (player !== p) return false;
     parent.contentView.addChildView(view);
+    syncSurface(p);
     p.attached = true;
     parent.webContents.focus();
     contents.setAudioMuted(false);
@@ -237,8 +289,19 @@ async function movieAction(id, action, value) {
   const p = player;
   if (!p || p.id !== id) return null;
   if (action === 'close') { closeMovie(); return null; }
-  if (action === 'bounds') { positionMovie(p, value); return null; }
-  if (action === 'visible') { p.view.setVisible(value === true); return null; }
+  if (action === 'bounds') {
+    const aligned = positionMovie(p, value);
+    if (p.controls !== value.controls) { p.controls = value.controls; syncSurface(p); }
+    await aligned;
+    return null;
+  }
+  if (action === 'visible') {
+    p.visible = value === true;
+    if (!p.visible && p.contents.isFocused()) p.parent.webContents.focus();
+    p.view.setVisible(p.visible);
+    watchHiddenPointer(p);
+    return null;
+  }
   if (!p.frame) return null;
   if (action === 'caption-list' || ['caption-versions', 'caption-style', 'caption-apply', 'caption-dismiss'].includes(action) || action === 'caption-select' || action === 'caption-add') {
     return p.frame.executeJavaScript(`(${movieCaptions})(${JSON.stringify(action.slice(8))},${JSON.stringify(value)})`, true);
@@ -252,11 +315,13 @@ async function movieAction(id, action, value) {
   else if (action === 'pause') change = "v.pause();";
   else if (action === 'play') change = "void v.play().catch(()=>{});";
   else if (action === 'seek' && Number.isFinite(value)) change = `if(Number.isFinite(v.duration)) v.currentTime=Math.max(0,Math.min(v.duration,${value}));`;
+  else if (action === 'seek-by' && Number.isFinite(value)) change = `if(Number.isFinite(v.duration)) v.currentTime=Math.max(0,Math.min(v.duration,v.currentTime+${value}));`;
   else if (action === 'volume' && Number.isFinite(value)) change = `v.volume=${Math.max(0,Math.min(1,value))}; v.muted=v.volume===0;`;
   else if (action !== 'status') return null;
   const state = await p.frame.executeJavaScript(`(() => { const v=document.querySelector('video[data-kadr-film]'); if(!v||v.error) return null;
-    ${change} return { time:v.currentTime, duration:Number.isFinite(v.duration)?v.duration:0, paused:v.paused, ended:v.ended, volume:v.muted?0:v.volume }; })()`, action === 'toggle');
+    ${change} return { providerMenuOpen: ${p.providerMenu ? "!!document.querySelector('.jw-menu.is-open .jw-tabs')" : 'false'}, time:v.currentTime, duration:Number.isFinite(v.duration)?v.duration:0, paused:v.paused, ended:v.ended, volume:v.muted?0:v.volume }; })()`, action === 'toggle');
   if (player === p && state) {
+    if (p.providerMenu && !state.providerMenuOpen) { p.providerMenu = false; syncSurface(p); }
     if (!state.paused && p.blocker === undefined) p.blocker = powerSaveBlocker.start('prevent-display-sleep');
     if (state.paused && p.blocker !== undefined) { powerSaveBlocker.stop(p.blocker); p.blocker = undefined; }
   }
