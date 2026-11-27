@@ -38,6 +38,8 @@ button { font: inherit; color: inherit; }
 #titlebar .tb-btn { -webkit-app-region: no-drag; width: 34px; height: 30px; border: 0; background: transparent; border-radius: 8px; display: grid; place-items: center; color: #d7dbe4; cursor: pointer; }
 #titlebar .tb-btn:hover { background: rgba(255,255,255,.1); }
 #titlebar .tb-btn .ic { width: 18px; height: 18px; }
+#titlebar #btn-back { display: none; }
+#app.catalog-selection #btn-back { display: grid; flex-shrink: 0; }
 .brand { display: flex; align-items: center; gap: 7px; font-weight: 800; letter-spacing: .2px; font-size: 13px; color: #fff; }
 .brand img { width: 18px; height: 18px; }
 #title-text { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: #c9cdd8; font-weight: 500; padding-left: 6px; }
@@ -291,9 +293,25 @@ input[type=color] { width: 38px; height: 28px; border: 1px solid var(--line2); b
 .catalog-head h2 { margin: 0; font-size: clamp(20px, 3vw, 28px); }
 #catalog-query { width: 100%; min-width: 0; height: 38px; color: inherit; font: inherit; background: #1c1f28; border: 1px solid var(--line2); border-radius: 10px; padding: 0 12px; user-select: text; }
 #catalog :focus-visible { outline: 2px solid var(--acc2); outline-offset: 2px; }
+.catalog-sections { flex-wrap: wrap; gap: 6px; }
 .catalog-sections button { cursor: pointer; border: 1px solid var(--line2); border-radius: 99px; padding: 5px 12px; background: transparent; }
 .catalog-sections button[aria-pressed=true] { color: var(--acc2); border-color: var(--acc2); }
-#catalog-content { overflow: auto; overscroll-behavior: contain; padding: 3px; }
+#catalog-body { display: flex; flex: 1; min-height: 0; gap: 16px; color-scheme: dark; }
+#catalog-content { flex: 1; min-width: 0; overflow: auto; overscroll-behavior: contain; padding: 3px; }
+#series-detail { display: flex; flex-direction: column; width: min(38%, 300px); overflow: auto; overscroll-behavior: contain; padding: 12px; border: 1px solid var(--line2); border-radius: 12px; background: #191c25; }
+#series-detail header { display: flex; justify-content: space-between; align-items: center; gap: 6px; }
+#series-title { margin: 0; overflow-wrap: anywhere; }
+#series-status { margin: 8px 0; color: var(--muted); }
+#series-status:empty { display: none; }
+#series-season-label { display: flex; align-items: center; gap: 10px; margin: 9px 0; }
+#series-season { flex: 1; min-width: 0; }
+#series-episodes { display: grid; gap: 5px; }
+#series-episodes button { padding: 9px 10px; text-align: left; border: 1px solid var(--line); border-radius: 8px; background: rgba(255,255,255,.04); cursor: pointer; }
+#series-episodes button:hover { border-color: var(--acc2); }
+@media (max-width: 640px) {
+  #catalog-body { position: relative; }
+  #series-detail { position: absolute; inset: 0; width: 100%; z-index: 1; }
+}
 #catalog-heading { margin: 0 0 12px; font-size: 15px; overflow-wrap: anywhere; }
 #catalog-status { color: var(--muted); }
 #catalog-status:empty, #catalog [hidden] { display: none; }

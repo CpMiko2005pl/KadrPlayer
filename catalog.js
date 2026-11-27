@@ -1,4 +1,4 @@
-const { WebContentsView, session, powerSaveBlocker } = require('electron');
+const { WebContentsView, session, powerSaveBlocker, net } = require('electron');
 const { setTimeout: delay } = require('node:timers/promises');
 
 const origin = 'https://hydrahd.com';
@@ -17,14 +17,44 @@ function getSession() {
   return catalogSession;
 }
 
-function movieAddress(address) {
+function catalogAddress(address, pathPattern) {
   try {
     const url = new URL(address);
-    if (movieOrigins.has(url.origin) && !url.username && !url.password && /^\/movie\/[\w-]+\/?$/.test(url.pathname)) {
+    if (movieOrigins.has(url.origin) && !url.username && !url.password && pathPattern.test(url.pathname)) {
       return url.origin + url.pathname;
     }
   } catch {}
   return null;
+}
+
+const seriesPath = /^\/watchseries\/[\w-]+\/?$/;
+const playbackPath = /^(?:\/movie\/[\w-]+|\/watchseries\/[\w-]+\/season\/\d+\/episode\/\d+)\/?$/;
+const movieAddress = address => catalogAddress(address, playbackPath);
+
+async function fetchSeries(address) {
+  const url = catalogAddress(address, seriesPath);
+  if (!url) throw new Error('Nieprawidłowy adres serialu.');
+  return new Promise((resolve, reject) => {
+    const request = net.request({ url, session: getSession(), redirect: 'manual' });
+    const timeout = setTimeout(() => fail(new Error('Przekroczono czas wczytywania sezonów.')), 18000);
+    let redirects = 0;
+    function fail(error) {
+      clearTimeout(timeout);
+      reject(error);
+      request.abort();
+    }
+    request.on('error', fail);
+    request.on('redirect', (_status, _method, target) => {
+      if (++redirects <= 4 && catalogAddress(target, seriesPath)) request.followRedirect();
+      else fail(new Error('Nieprawidłowe przekierowanie serialu.'));
+    });
+    request.on('response', response => {
+      const status = response.statusCode;
+      const type = String(response.headers['content-type'] || '');
+      readCatalogHtml(status, type, response).then(resolve, fail).finally(() => clearTimeout(timeout));
+    });
+    request.end();
+  });
 }
 
 async function fetchCatalog({ section, query, page }) {
@@ -36,15 +66,21 @@ async function fetchCatalog({ section, query, page }) {
     if (page === 1) url.search = new URLSearchParams({ menu: 'search', query: query.trim() }).toString();
   } else if (section === 'popular' || section === 'date') {
     url = new URL('/movies/' + section + '/' + (page === 1 ? '' : page), origin);
+  } else if (section === 'series') {
+    url = new URL(page === 1 ? '/series' : '/tv-shows/date/' + page, origin);
   } else throw new Error('Nieprawidłowe zapytanie do katalogu.');
 
   const response = await getSession().fetch(url.href, { signal: AbortSignal.timeout(18000), redirect: 'error' });
-  if (!response.ok || !response.headers.get('content-type')?.includes('text/html')) {
-    throw new Error('HydraHD nie udostępnił katalogu (HTTP ' + response.status + ').');
+  return readCatalogHtml(response.status, response.headers.get('content-type'), response.body);
+}
+
+async function readCatalogHtml(status, type, body) {
+  if (status < 200 || status >= 300 || !type?.includes('text/html') || !body) {
+    throw new Error('HydraHD nie udostępnił katalogu (HTTP ' + status + ').');
   }
   const chunks = [];
   let size = 0;
-  for await (const chunk of response.body) {
+  for await (const chunk of body) {
     size += chunk.length;
     if (size > 2 * 1024 * 1024) throw new Error('Zbyt duża odpowiedź katalogu.');
     chunks.push(chunk);
@@ -160,10 +196,20 @@ async function openMovie(parent, address, id, bounds, volume) {
   contents.on('will-frame-navigate', restrictNavigation);
   contents.on('will-redirect', restrictNavigation);
   contents.on('before-input-event', (event, key) => {
-    if (key.type === 'keyDown' && [' ', 'Escape', 'ArrowLeft','ArrowRight','m','f'].includes(key.key)) {
-      event.preventDefault(); parent.webContents.send('catalog:key', key.key);
+    if (key.type === 'keyDown' && [' ', 'Escape', 'ArrowLeft', 'ArrowRight', 'm', 'f', 'Backspace', 'k'].includes(key.key)) {
+      event.preventDefault();
+      parent.webContents.send('catalog:key', { key: key.key, ctrlKey: key.control, shiftKey: key.shift, altKey: key.alt });
     }
   });
+  let lastMovement = 0;
+  contents.on('input-event', (_event, input) => {
+    const now = Date.now();
+    if (p.attached && input.type === 'mouseMove' && now - lastMovement >= 150) {
+      lastMovement = now;
+      parent.webContents.send('catalog:pointer');
+    }
+  });
+  contents.on('context-menu', () => { if (p.attached) parent.webContents.send('catalog:menu'); });
   const timeout = setTimeout(() => { if (player === p) closeMovie(); }, 50000);
   try {
     await startProvider(p, url);
@@ -203,4 +249,4 @@ async function movieAction(id, action, value) {
   return state;
 }
 
-module.exports = { fetchCatalog, openMovie, movieAction, closeMovie };
+module.exports = { fetchCatalog, fetchSeries, openMovie, movieAction, closeMovie };

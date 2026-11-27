@@ -1,7 +1,7 @@
 {
   "name": "kadr-player",
   "productName": "Kadr Player",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "description": "Odtwarzacz wideo na Windows: każdy format (ffmpeg), skalowanie wysokiej jakości (Lanczos, FSR), płynny ruch, korektor dźwięku i napisy",
   "main": "main.js",
   "author": "BiNoX",

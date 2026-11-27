@@ -38,6 +38,7 @@
   $('[data-act=open-folder]').innerHTML = icon('folder-open') + 'Otwórz folder';
   $('[data-act=open-url]').innerHTML = icon('link') + 'Adres URL';
   $('[data-act=open-catalog]').insertAdjacentHTML('afterbegin', icon('clapperboard'));
+  $('#btn-back').innerHTML = '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 19-7-7 7-7M5 12h14"/></svg>';
 
   // ---------- core objects ----------
   let encList = (S._enc && S._enc.ffmpeg === cfg.ffmpeg && S._enc.list) || null;
@@ -47,7 +48,10 @@
   };
   if (!encList) window.kadr.encoders().then(list => { encList = list; S._enc = { ffmpeg: cfg.ffmpeg, list }; saveSettings(); }).catch(() => { encList = ['libx264']; });
   const engine = new K.Engine(video, { base: cfg.base, token: cfg.token, settings: () => S, encoder: pickEncoder });
-  const openCatalog = K.createMovieCatalog(movie => openCatalogItem({ path: movie.url, title: movie.title, catalog: true }));
+  const openCatalog = K.createMovieCatalog((movie, episodes = [movie], index = 0) => {
+    playlist = episodes.map(entry => ({ path: entry.url, title: entry.title, catalog: true }));
+    playIndex(index);
+  });
   const sound = new K.AudioChain(video);
   const subsView = new K.SubtitleView($('#subs'));
   let gl = null;
@@ -79,8 +83,9 @@
   const seekPlayback = (t, exact) => remote ? controlMovie('seek', t) : engine.seek(t, exact);
 
   function movieBounds() {
-    const y = $('#titlebar').offsetHeight;
-    return { x: 0, y, width: innerWidth, height: innerHeight - y - $('#controls').offsetHeight };
+    const controls = app.classList.contains('ui-visible');
+    const y = controls ? $('#titlebar').offsetHeight : 0;
+    return { x: 0, y, width: innerWidth, height: innerHeight - y - (controls ? $('#controls').offsetHeight : 0) };
   }
 
   function closeRemote() {
@@ -121,6 +126,7 @@
 
   function movieFailed() {
     closeRemote();
+    showUI();
     $('#error-text').textContent = 'Nie udało się odtworzyć filmu z HydraHD. Otwórz katalog, aby spróbować ponownie lub wybrać inny tytuł.';
     $('[data-act=force-encode]').style.display = 'none';
     app.classList.remove('waiting');
@@ -139,6 +145,7 @@
       current.ready = true;
       refreshMovieView();
       app.classList.remove('waiting');
+      showUI();
       if (start) await controlMovie('seek', start);
       while (current === remote) {
         await controlMovie('status');
@@ -181,15 +188,16 @@
   let hideTimer;
   const overUI = () => document.querySelector('#controls:hover, #titlebar:hover, .drawer.open, .modal.open') !== null;
   function showUI() {
-    if (!app.classList.contains('ui-visible')) { app.classList.add('ui-visible'); layoutSubs(); window.kadr.overlay({ color: '#00000000', symbolColor: '#d7dbe4', height: 38 }); }
+    if (!app.classList.contains('ui-visible')) { app.classList.add('ui-visible'); layoutSubs(); refreshMovieView(); window.kadr.overlay({ color: '#00000000', symbolColor: '#d7dbe4', height: 38 }); }
     clearTimeout(hideTimer);
     hideTimer = setTimeout(maybeHide, app.classList.contains('mini') ? 1600 : 2600);
   }
   function maybeHide() {
-    if (remote || video.paused || app.classList.contains('empty') || overUI() || seekDrag || volDrag) { hideTimer = setTimeout(maybeHide, 1200); return; }
+    if (playbackPaused() || app.classList.contains('empty') || overUI() || $('#catalog').open || seekDrag || volDrag) { hideTimer = setTimeout(maybeHide, 1200); return; }
     app.classList.remove('ui-visible');
     tip.classList.remove('on');
     layoutSubs();
+    refreshMovieView();
     if (!app.classList.contains('fullscreen')) window.kadr.overlay({ color: '#00000000', symbolColor: '#00000000', height: 38 });
   }
   document.addEventListener('mousemove', showUI);
@@ -565,6 +573,7 @@
   $('#b-subs').onclick = () => popup(subsMenu());
   $('#b-audio').onclick = () => popup(audioMenu());
   $('#btn-menu').onclick = () => popup(mainMenu());
+  $('#btn-back').onclick = returnToCatalog;
   function setPlayIcon() {
     $('#b-play').innerHTML = icon(playbackPaused() ? 'play' : 'pause');
     $('#b-speed').textContent = (video.playbackRate || 1) + '×';
@@ -667,7 +676,7 @@
       mk('Otwórz pliki…', openFiles, { accelerator: 'Ctrl+O' }),
       mk('Otwórz folder…', openFolder, { accelerator: 'Ctrl+Shift+O' }),
       mk('Otwórz adres URL…', openUrl, { accelerator: 'Ctrl+U' }),
-      mk('Przeglądaj filmy…', openCatalog, { accelerator: 'Ctrl+K' }),
+      mk('Filmy i seriale…', openCatalog, { accelerator: 'Ctrl+K' }),
       mk('Ostatnio otwierane', null, { submenu: ST.recent.length ? ST.recent.slice(0, 15).map(r => mk(r.title || baseName(r.path), () => openRecent(r))) : [mk('(pusto)', null, { enabled: false })] }),
       sep,
       mk(has && !playbackPaused() ? 'Pauza' : 'Odtwórz', togglePlay, { enabled: has, accelerator: 'Space' }),
@@ -675,9 +684,18 @@
       mk('Poprzedni', () => playRelative(-1), { enabled: plIndex > 0 }),
       mk('Następny', () => playRelative(1), { enabled: plIndex >= 0 && plIndex < playlist.length - 1 }),
       sep,
-      mk('Dźwięk', null, { submenu: audioMenu(), enabled: has }),
-      mk('Napisy', null, { submenu: subsMenu(), enabled: has }),
     ];
+    if (cur?.item.catalog) {
+      items.splice(6, 0, mk('Wróć do katalogu', returnToCatalog, { accelerator: 'Esc' }));
+      items.push(mk(S.muted ? 'Włącz dźwięk' : 'Wycisz', () => $('#b-mute').click(), { accelerator: 'M' }));
+      items.push(check('Pełny ekran', app.classList.contains('fullscreen'), () => window.kadr.fullscreen(), 'F'));
+      items.push(mk('Lista odtwarzania', toggleList, { accelerator: 'P' }));
+      items.push(mk('Ustawienia…', () => openPanel('picture'), { accelerator: 'Ctrl+,' }));
+      items.push(mk('O programie i sponsorzy', () => openPanel('about')));
+      return items;
+    }
+    items.push(mk('Dźwięk', null, { submenu: audioMenu(), enabled: has }));
+    items.push(mk('Napisy', null, { submenu: subsMenu(), enabled: has }));
     if (has && cur.info && cur.info.chapters.length) items.push(mk('Rozdziały', null, { submenu: chaptersMenu() }));
     items.push(mk('Prędkość', null, { submenu: speedMenu(), enabled: has }));
     items.push(mk('Obraz', null, { enabled: vid, submenu: [
@@ -948,11 +966,18 @@
     subsView.clear();
     clearThumbs();
     app.classList.add('empty');
-    app.classList.remove('audio-only', 'error', 'waiting');
+    app.classList.remove('audio-only', 'error', 'waiting', 'catalog-selection');
     $('#title-text').textContent = '';
     window.kadr.title('Kadr Player');
     window.kadr.powerBlock(false);
     renderRecent();
+  }
+
+  function returnToCatalog() {
+    if (!cur?.item.catalog) return;
+    stopPlayback();
+    closeDrawers();
+    openCatalog();
   }
 
   function resumeKey(p) { return p.toLowerCase(); }
@@ -975,6 +1000,7 @@
     clearThumbs();
     const c = { item, info: null, crop: null, pan: { x: 0, y: 0 }, subTracks: [], subSel: -1, subDelay: 0, cues: null, firstFrame: true };
     cur = c;
+    app.classList.toggle('catalog-selection', !!item.catalog);
     subsView.clear();
     app.classList.remove('empty', 'error', 'audio-only');
     app.classList.add('waiting');
@@ -1054,7 +1080,9 @@
     const r = ST.recent.find(x => x.path === cur.item.path); if (r) r.t = 0;
     saveState();
     if (remote) {
-      if (S.repeat !== 'off') controlMovie('seek', 0).then(() => { if (remote && playbackPaused()) controlMovie('toggle'); });
+      if (S.repeat === 'one' || (S.repeat === 'all' && playlist.length === 1)) {
+        controlMovie('seek', 0).then(() => { if (remote && playbackPaused()) controlMovie('toggle'); });
+      } else if (S.autoNext && (plIndex < playlist.length - 1 || S.repeat === 'all')) playRelative(1);
       return;
     }
     if (S.repeat === 'one') { engine.seek(0, true); engine.play(); return; }
@@ -1394,12 +1422,13 @@
       else if (document.querySelector('.drawer.open')) closeDrawers();
       else if (app.classList.contains('fullscreen')) window.kadr.fullscreen(false);
       else if (app.classList.contains('mini')) toggleMini(false);
+      else if (cur?.item.catalog) returnToCatalog();
     }
     else if (k === ',') frameStep(-1);
     else if (k === '.') frameStep(1);
     else if (k === '[') setSpeed((video.playbackRate || 1) - 0.1);
     else if (k === ']') setSpeed((video.playbackRate || 1) + 0.1);
-    else if (k === 'Backspace') setSpeed(1);
+    else if (k === 'Backspace') { if (cur?.item.catalog) returnToCatalog(); else setSpeed(1); }
     else if (k === 's' || k === 'S') screenshot();
     else if (k === 'v') cycleSub();
     else if (k === 'V') selectSub(-1);
@@ -1457,7 +1486,9 @@
   });
 
   window.kadr.onOpen(({ files, replace }) => openPaths(files, { append: !replace }));
-  window.kadr.onMovieKey(key => app.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true })));
+  window.kadr.onMovieKey(key => app.dispatchEvent(new KeyboardEvent('keydown', { ...key, bubbles: true })));
+  window.kadr.onMoviePointer(() => { if (remote) showUI(); });
+  window.kadr.onMovieMenu(() => { if (remote) { showUI(); popup(mainMenu()); } });
 
   // the GPU process died while Chromium decoded this codec → never trust its hardware decoder for it again
   window.kadr.onGpuCrash(() => {

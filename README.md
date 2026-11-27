@@ -16,9 +16,9 @@ prep (przycięcie, obrót, płynny ruch, deband, kolory, sRGB→liniowe) → sep
 
 ## Katalog filmów
 
-Na ekranie startowym zobaczysz sześć popularnych filmów z plakatami. Wybierz **Przeglądaj filmy** lub naciśnij **Ctrl+K**, aby otworzyć pełny katalog. Sekcja **Na czasie** pokazuje popularne filmy z HydraHD, a **Ostatnio dodane** pokazuje najnowsze pozycje katalogu. Wpisz tytuł i naciśnij Enter, żeby wyszukać film. Plakat, tytuł i rok pomagają rozpoznać konkretną wersję.
+Na ekranie startowym zobaczysz sześć popularnych filmów z plakatami. Wybierz **Filmy i seriale** lub naciśnij **Ctrl+K**, aby otworzyć katalog HydraHD. Możesz przeglądać popularne filmy, ostatnio dodane filmy i seriale lub wyszukać tytuł. Po wybraniu serialu wybierz sezon i odcinek w panelu obok wyników.
 
-Wybierz plakat, aby automatycznie uruchomić film w głównym oknie Kadr Playera. Pasek Kadr Playera obsługuje pauzę, przewijanie, głośność i pełny ekran. Skrót **Ctrl+K** otwiera katalog ponownie.
+Kliknięcie plakatu filmu lub odcinka uruchamia odtwarzanie w głównym oknie. Porusz myszą, aby wyświetlić sterowanie i strzałkę powrotu. Strzałka kończy odtwarzanie i otwiera ostatnią listę wyników lub listę odcinków.
 
 ## Budowanie
 ```

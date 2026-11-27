@@ -9,7 +9,8 @@
 <body>
 <div id="app" class="empty">
   <header id="titlebar">
-    <button id="btn-menu" class="tb-btn" data-tip="Menu"></button>
+    <button id="btn-back" class="tb-btn" aria-label="Wróć do katalogu" data-tip="Wróć do katalogu (Esc)"></button>
+    <button id="btn-menu" class="tb-btn" aria-label="Menu odtwarzacza" data-tip="Menu"></button>
     <div class="brand"><img src="img/logo.svg" alt=""><span>Kadr</span></div>
     <div id="title-text"></div>
   </header>
@@ -34,7 +35,7 @@
           <button class="btn primary" data-act="open-files"></button>
           <button class="btn" data-act="open-folder"></button>
           <button class="btn" data-act="open-url"></button>
-          <button class="btn" data-act="open-catalog">Przeglądaj filmy</button>
+          <button class="btn" data-act="open-catalog">Filmy i seriale</button>
         </div>
         <p class="hint">albo przeciągnij tu pliki lub folder</p>
       </div>
@@ -117,17 +118,19 @@
   <div id="tooltip"></div>
   <dialog id="catalog" aria-labelledby="catalog-title">
     <header class="catalog-head">
-      <div><small>HydraHD</small><h2 id="catalog-title">Przeglądaj filmy</h2></div>
+      <div><small>HydraHD</small><h2 id="catalog-title">Filmy i seriale</h2></div>
       <button id="catalog-close" class="cb" type="button" aria-label="Zamknij katalog" title="Zamknij katalog"></button>
     </header>
     <form id="catalog-search" role="search">
-      <input id="catalog-query" type="search" placeholder="Wpisz tytuł filmu…" aria-label="Tytuł filmu" maxlength="160" autocomplete="off">
+      <input id="catalog-query" type="search" placeholder="Wpisz tytuł filmu lub serialu…" aria-label="Tytuł filmu lub serialu" maxlength="160" autocomplete="off">
       <button class="btn primary" type="submit">Szukaj</button>
     </form>
     <nav class="catalog-sections" aria-label="Sekcje katalogu">
       <button type="button" data-section="popular" aria-pressed="true">Na czasie</button>
       <button type="button" data-section="date" aria-pressed="false">Ostatnio dodane</button>
+      <button type="button" data-section="series" aria-pressed="false">Seriale</button>
     </nav>
+    <div id="catalog-body">
     <div id="catalog-content">
       <h3 id="catalog-heading"></h3>
       <p id="catalog-status" role="status"></p>
@@ -138,6 +141,13 @@
         <span id="catalog-page"></span>
         <button id="catalog-next" type="button" class="btn small">Następna</button>
       </nav>
+    </div>
+    <aside id="series-detail" aria-labelledby="series-title" hidden>
+      <header><h3 id="series-title"></h3><button id="series-close" type="button" class="cb" aria-label="Zamknij listę odcinków"></button></header>
+      <p id="series-status" role="status"></p>
+      <label id="series-season-label" hidden>Sezon <select id="series-season"></select></label>
+      <div id="series-episodes"></div>
+    </aside>
     </div>
   </dialog>
   <div id="drop-hint"><div>Upuść, aby odtworzyć<small>Shift — dodaj do listy · pliki napisów wczytują się do bieżącego filmu</small></div></div>

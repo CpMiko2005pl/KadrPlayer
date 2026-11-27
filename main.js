@@ -177,6 +177,7 @@ handle('state:set', s => { state.set(Object.assign({}, state.get(), { recent: s.
 handle('media:probe', input => media.probe(input));
 handle('media:find-in-page', url => media.findInPage(url));
 handle('catalog:list', request => catalog.fetchCatalog(request));
+handle('catalog:series', url => catalog.fetchSeries(url));
 handle('catalog:play', (url, id, bounds, volume) => catalog.openMovie(win, url, id, bounds, volume));
 handle('catalog:action', (id, action, value) => catalog.movieAction(id, action, value));
 handle('media:encoders', () => media.encoders());
