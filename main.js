@@ -140,8 +140,20 @@ function createWindow() {
   win.on('close', () => catalog.closeMovie());
   win.on('closed', () => { win = null; });
   if (DEBUG) win.webContents.on('console-message', (e, level, msg, line, src) => log('page', level, msg, src ? `${path.basename(src)}:${line}` : ''));
-  win.webContents.on('render-process-gone', (e, d) => log('renderer gone', d));
+  win.webContents.on('unresponsive', () => log('window unresponsive'));
+  win.webContents.on('responsive', () => log('window responsive again'));
 }
+
+// any renderer that dies (the window or an embedded movie view) is logged; a dead window reloads instead of staying blank
+let lastReload = 0;
+app.on('render-process-gone', (e, contents, d) => {
+  const main = win && !win.isDestroyed() && contents === win.webContents;
+  log('renderer gone', main ? 'window' : 'view', d);
+  if (main && d.reason !== 'clean-exit' && Date.now() - lastReload > 10000) {
+    lastReload = Date.now();
+    setTimeout(() => { if (win && !win.isDestroyed()) win.reload(); }, 300);
+  }
+});
 
 function openExternal(url) {
   if (!/^https?:\/\//i.test(url)) return;

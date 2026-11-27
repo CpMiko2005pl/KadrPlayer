@@ -36,6 +36,7 @@ vec2 mapUV(vec2 q){
 }
 void main(){
   vec2 s = mapUV(uv);
+  s.y = 1.0 - s.y;               // the video texture is uploaded top-down (no UNPACK_FLIP_Y copy)
   vec4 c = texture(T, s);
   if (debandOn) {
     vec2 px = 1.0 / vec2(textureSize(T, 0));
@@ -65,28 +66,17 @@ void main(){
   o = vec4(c.rgb, 1.0);
 }`;
 
-  const SEP = COMMON + `
-uniform sampler2D T; uniform bool horiz; uniform float scale; uniform int kernel; uniform float radius; uniform float antiring;
-float sinc(float x){ if (abs(x) < 1e-5) return 1.0; x *= 3.14159265; return sin(x) / x; }
-float cubic(float x, float B, float C){
-  x = abs(x);
-  if (x < 1.0) return ((12.0 - 9.0*B - 6.0*C)*x*x*x + (-18.0 + 12.0*B + 6.0*C)*x*x + (6.0 - 2.0*B)) / 6.0;
-  if (x < 2.0) return ((-B - 6.0*C)*x*x*x + (6.0*B + 30.0*C)*x*x + (-12.0*B - 48.0*C)*x + (8.0*B + 24.0*C)) / 6.0;
-  return 0.0;
-}
-float spline36(float x){
-  x = abs(x);
-  if (x < 1.0) return ((13.0/11.0*x - 453.0/209.0)*x - 3.0/209.0)*x + 1.0;
-  if (x < 2.0) { x -= 1.0; return ((-6.0/11.0*x + 270.0/209.0)*x - 156.0/209.0)*x; }
-  if (x < 3.0) { x -= 2.0; return ((1.0/11.0*x - 45.0/209.0)*x + 26.0/209.0)*x; }
-  return 0.0;
-}
+  const LUT_N = 2048;
+  const SEP = COMMON + `#define LUT_N ${LUT_N}
+
+uniform sampler2D T; uniform bool horiz; uniform float scale; uniform float radius; uniform float antiring;
+uniform highp sampler2D W;      // kernel weights K(x) for x in [0, radius], LUT_N samples — no sin() per tap
+uniform bool flipSrc;           // T is the raw video texture (rows top-down) instead of the prep pass
+uniform bool linIn;             // linearize each tap (raw sRGB video in, linear light out)
+vec3 linFast(vec3 c){ return c * (c * (c * 0.305306011 + 0.682171111) + 0.012522878); }
 float K(float x){
-  if (kernel == 0) return cubic(x, 0.0, 0.5);
-  if (kernel == 1) return cubic(x, 1.0/3.0, 1.0/3.0);
-  if (kernel == 2) return abs(x) < 3.0 ? sinc(x) * sinc(x / 3.0) : 0.0;
-  if (kernel == 3) return spline36(x);
-  return 0.0;
+  float a = abs(x) / radius;
+  return a < 1.0 ? texelFetch(W, ivec2(int(a * float(LUT_N - 1) + 0.5), 0), 0).r : 0.0;
 }
 void main(){
   ivec2 sz = textureSize(T, 0);
@@ -96,6 +86,7 @@ void main(){
   float ss = clamp(1.0 / scale, 1.0, 10.0);
   int taps = min(int(ceil(radius * ss)), 32);
   ivec2 fc = ivec2(gl_FragCoord.xy);
+  if (flipSrc) fc.y = sz.y - 1 - fc.y;
   vec4 sum = vec4(0.0); float wsum = 0.0;
   vec4 lo = vec4(1e9), hi = vec4(-1e9);
   // dynamic bounds: only the taps the kernel needs (6 for Lanczos-3 when enlarging) instead of a fixed 64
@@ -103,6 +94,7 @@ void main(){
     float w = K((float(i) - f) / ss);
     int k = clamp(int(base) + i, 0, len - 1);
     vec4 t = texelFetch(T, horiz ? ivec2(k, fc.y) : ivec2(fc.x, k), 0);
+    if (linIn) t.rgb = linFast(t.rgb);
     sum += t * w; wsum += w;
     if (i == 0 || i == 1) { lo = min(lo, t); hi = max(hi, t); }
   }
@@ -112,8 +104,8 @@ void main(){
 }`;
 
   const POST = COMMON + `
-uniform sampler2D T; uniform vec2 outSize; uniform float sharp; uniform bool delin;
-vec3 at(vec2 off){ vec3 c = texture(T, uv + off / outSize).rgb; return delin ? toSrgb(c) : c; }
+uniform sampler2D T; uniform vec2 outSize; uniform float sharp; uniform bool delin; uniform bool flipSrc;
+vec3 at(vec2 off){ vec2 q = uv + off / outSize; if (flipSrc) q.y = 1.0 - q.y; vec3 c = texture(T, q).rgb; return delin ? toSrgb(c) : c; }
 void main(){
   vec3 e = at(vec2(0.0));
   if (sharp > 0.001) {
@@ -138,6 +130,22 @@ void main(){
 }`;
 
   const KERNELS = { catrom: [0, 2], mitchell: [1, 2], lanczos: [2, 3], spline36: [3, 3] };
+  // the same kernel functions as before, evaluated once on the CPU into the weight table
+  const cubic = (x, B, C) => {
+    x = Math.abs(x);
+    if (x < 1) return ((12 - 9 * B - 6 * C) * x ** 3 + (-18 + 12 * B + 6 * C) * x * x + (6 - 2 * B)) / 6;
+    if (x < 2) return ((-B - 6 * C) * x ** 3 + (6 * B + 30 * C) * x * x + (-12 * B - 48 * C) * x + (8 * B + 24 * C)) / 6;
+    return 0;
+  };
+  const sinc = x => (Math.abs(x) < 1e-7 ? 1 : Math.sin(Math.PI * x) / (Math.PI * x));
+  const spline36 = x => {
+    x = Math.abs(x);
+    if (x < 1) return ((13 / 11 * x - 453 / 209) * x - 3 / 209) * x + 1;
+    if (x < 2) { x -= 1; return ((-6 / 11 * x + 270 / 209) * x - 156 / 209) * x; }
+    if (x < 3) { x -= 2; return ((1 / 11 * x - 45 / 209) * x + 26 / 209) * x; }
+    return 0;
+  };
+  const KFUNC = [x => cubic(x, 0, 0.5), x => cubic(x, 1 / 3, 1 / 3), x => (Math.abs(x) < 3 ? sinc(x) * sinc(x / 3) : 0), spline36];
 
   class GLRenderer {
     constructor(canvas) {
@@ -163,6 +171,16 @@ void main(){
         gl.enableVertexAttribArray(0);
         gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
         this.src = this.texture();
+        this.luts = KFUNC.map((f, k) => {
+          const data = new Float32Array(LUT_N), r = Object.values(KERNELS).find(v => v[0] === k)[1];
+          for (let i = 0; i < LUT_N; i++) data[i] = f(i / (LUT_N - 1) * r);
+          const t = gl.createTexture();
+          gl.bindTexture(gl.TEXTURE_2D, t);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+          gl.texImage2D(gl.TEXTURE_2D, 0, gl.R32F, LUT_N, 1, 0, gl.RED, gl.FLOAT, data);
+          return t;
+        });
         this.texW = 0; this.texH = 0;
         this.fbos = {};
         this.slot = 0;            // output slot holding the newest processed frame
@@ -208,11 +226,13 @@ void main(){
     fbo(name, w, h, float) {
       const gl = this.gl;
       let f = this.fbos[name];
-      const fmt = float && this.float ? 'f' : 'b';
+      // linear light is kept in sRGB-encoded 8-bit textures: the GPU decodes/encodes for free on fetch/write,
+      // half the memory traffic of RGBA16F (which cost ~20 ms per 1080p frame on an Intel HD 520)
+      const fmt = float ? 's' : 'b';
       if (f && f.w === w && f.h === h && f.fmt === fmt) return f;
       if (f) { gl.deleteTexture(f.tex); gl.deleteFramebuffer(f.fb); }
       const tex = this.texture();
-      if (fmt === 'f') gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, w, h, 0, gl.RGBA, gl.HALF_FLOAT, null);
+      if (fmt === 's') gl.texImage2D(gl.TEXTURE_2D, 0, gl.SRGB8_ALPHA8, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
       else gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
       const fb = gl.createFramebuffer();
       gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
@@ -228,7 +248,8 @@ void main(){
       const w = video.videoWidth, h = video.videoHeight;
       if (!w || !h) return false;
       gl.bindTexture(gl.TEXTURE_2D, this.src);
-      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);    // flipped in the shaders instead: cheaper upload path
+      // (an SRGB8_ALPHA8 upload would linearize for free on fetch, but Chromium copies video into it on a slow path: ~86 ms/frame)
       try { gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, video); }
       catch (e) { this.uploadError = e.message; return false; }
       this.texW = w; this.texH = h;
@@ -247,7 +268,7 @@ void main(){
       if (rot & 1) [sw, sh] = [sh, sw];
       const kernel = (dw !== sw || dh !== sh) && KERNELS[p.scaler];
       const down = dw < sw || dh < sh;
-      const linear = !!(p.linear && down && kernel && this.float);
+      const linear = !!(p.linear && down && kernel);
       const c = p.color || {};
       const colorOn = Math.abs(c.bright || 0) > 1e-3 || Math.abs((c.contr ?? 1) - 1) > 1e-3 || Math.abs((c.sat ?? 1) - 1) > 1e-3 || Math.abs((c.gamma ?? 1) - 1) > 1e-3 || Math.abs(c.hue || 0) > 1e-3;
       const seed = (performance.now() % 1000) / 1000;
@@ -256,10 +277,16 @@ void main(){
       gl.bindVertexArray(this.vao);
       gl.disable(gl.BLEND);
 
+      // the prep pass (full source size) only when it does something; otherwise the next pass reads the video texture
+      const plain = !rot && !p.flipH && !p.flipV && !colorOn && !p.deband && crop.x === 0 && crop.y === 0 && crop.w === 1 && crop.h === 1;
+      const trivial = plain && (!linear || kernel);      // linear light: the first scaling pass linearizes each tap itself
+      let src, P;
+      if (trivial) src = { tex: this.src, raw: true };
+      else {
       const prep = this.fbo('prep', sw, sh, hp);
       gl.bindFramebuffer(gl.FRAMEBUFFER, prep.fb);
       gl.viewport(0, 0, sw, sh);
-      let P = this.progs.prep; gl.useProgram(P.prog);
+      P = this.progs.prep; gl.useProgram(P.prog);
       gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, this.src);
       gl.uniform1i(P.u.T, 0);
       gl.uniform4f(P.u.crop, crop.x, 1 - crop.y - crop.h, crop.w, crop.h);   // crop is top-left based, textures bottom-up
@@ -274,21 +301,26 @@ void main(){
       gl.uniform1i(P.u.linearize, linear ? 1 : 0);
       gl.uniform1f(P.u.seed, seed);
       gl.drawArrays(gl.TRIANGLES, 0, 6);
+      src = prep;
+      }
 
-      let src = prep;
       if (kernel && (dw !== sw || dh !== sh)) {
         P = this.progs.sep; gl.useProgram(P.prog);
-        gl.uniform1i(P.u.kernel, kernel[0]); gl.uniform1f(P.u.radius, kernel[1]);
+        gl.uniform1f(P.u.radius, kernel[1]);
         gl.uniform1f(P.u.antiring, p.antiring ?? 0.6);
+        gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, this.luts[kernel[0]]); gl.uniform1i(P.u.W, 1);
         gl.uniform1i(P.u.T, 0); gl.activeTexture(gl.TEXTURE0);
         const fx = this.fbo('sx', dw, sh, hp);
         gl.bindFramebuffer(gl.FRAMEBUFFER, fx.fb); gl.viewport(0, 0, dw, sh);
-        gl.bindTexture(gl.TEXTURE_2D, prep.tex);
+        gl.bindTexture(gl.TEXTURE_2D, src.tex);
+        gl.uniform1i(P.u.flipSrc, src.raw ? 1 : 0);
+        gl.uniform1i(P.u.linIn, src.raw && linear ? 1 : 0);
         gl.uniform1i(P.u.horiz, 1); gl.uniform1f(P.u.scale, dw / sw);
         gl.drawArrays(gl.TRIANGLES, 0, 6);
         const fy = this.fbo('sy', dw, dh, hp);
         gl.bindFramebuffer(gl.FRAMEBUFFER, fy.fb); gl.viewport(0, 0, dw, dh);
         gl.bindTexture(gl.TEXTURE_2D, fx.tex);
+        gl.uniform1i(P.u.flipSrc, 0); gl.uniform1i(P.u.linIn, 0);
         gl.uniform1i(P.u.horiz, 0); gl.uniform1f(P.u.scale, dh / sh);
         gl.drawArrays(gl.TRIANGLES, 0, 6);
         src = fy;
@@ -307,6 +339,7 @@ void main(){
       gl.uniform2f(P.u.outSize, dw, dh);
       gl.uniform1f(P.u.sharp, p.sharpen || 0);
       gl.uniform1i(P.u.delin, linear ? 1 : 0);
+      gl.uniform1i(P.u.flipSrc, src.raw ? 1 : 0);
       gl.uniform1f(P.u.seed, seed);
       gl.drawArrays(gl.TRIANGLES, 0, 6);
       this.slotKey[this.slot] = dw + 'x' + dh;
