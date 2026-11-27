@@ -17,6 +17,8 @@ nativeTheme.themeSource = 'dark';
 // Keep settings and resume positions from installations using the previous product name.
 const previousProfile = path.join(app.getPath('appData'), 'Kadr Player');
 if (path.basename(app.getPath('userData')) === 'Kadr' && fs.existsSync(previousProfile)) app.setPath('userData', previousProfile);
+// tests keep their own profile instead of the installed Kadr's settings and history
+if (DEBUG && process.env.KADR_USER_DATA) app.setPath('userData', path.resolve(process.env.KADR_USER_DATA));
 const userDir = app.getPath('userData');
 const logFile = path.join(userDir, 'kadr.log');
 function log(...a) {
@@ -165,6 +167,15 @@ const handle = (ch, fn) => ipcMain.handle(ch, async (e, ...a) => {
   try { return await fn(...a); } catch (err) { log('ipc error', ch, err && err.stack || err); throw err; }
 });
 
+const updates = require('./updates').createUpdates({
+  installed: app.isPackaged && process.platform === 'win32',
+  getUpdater: () => require('electron-updater').autoUpdater,
+  notify: state => { if (win && !win.isDestroyed()) win.webContents.send('updates:state', state); }
+});
+handle('updates:check', updates.check);
+handle('updates:download', updates.download);
+handle('updates:install', updates.install);
+
 handle('app:init', async () => ({
   base: media.base, token: media.token, version: app.getVersion(),
   settings: settings.get(), state: state.get(),
@@ -176,7 +187,7 @@ handle('app:ffmpeg-version', () => media.version());
 // the page already debounces, so write right away (a change made just before closing must not be lost)
 handle('settings:set', s => { settings.set(s); settings.flush(); return true; });
 // the page owns only "recent" and "resume"; window bounds stay with the main process
-handle('state:set', s => { state.set(Object.assign({}, state.get(), { recent: s.recent, resume: s.resume })); state.flush(); return true; });
+handle('state:set', s => { state.set(Object.assign({}, state.get(), { recent: s.recent, resume: s.resume, license: s.license })); state.flush(); return true; });
 handle('media:probe', input => media.probe(input));
 handle('media:find-in-page', url => media.findInPage(url));
 handle('catalog:list', request => catalog.fetchCatalog(request));
@@ -394,7 +405,7 @@ handle('power:block', on => {
 });
 
 // native popup menu described by the page: [{id,label,type,checked,enabled,accelerator,submenu}]
-handle('menu:popup', (items) => new Promise(resolve => {
+handle('menu:popup', (items, position) => new Promise(resolve => {
   let picked = null;
   const build = list => list.map(it => {
     if (it.type === 'separator') return { type: 'separator' };
@@ -406,7 +417,8 @@ handle('menu:popup', (items) => new Promise(resolve => {
     return o;
   });
   const m = Menu.buildFromTemplate(build(items));
-  m.popup({ window: win, callback: () => setTimeout(() => resolve(picked), 0) });
+  const anchor = Number.isInteger(position?.x) && Number.isInteger(position?.y) ? { x: position.x, y: position.y } : {};
+  m.popup({ window: win, ...anchor, callback: () => setTimeout(() => resolve(picked), 0) });
 }));
 
 // test hooks (KADR_DEBUG=1 only)

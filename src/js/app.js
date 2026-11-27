@@ -29,7 +29,7 @@
   const saveState = (() => { let t; return () => { clearTimeout(t); t = setTimeout(() => window.kadr.saveState(ST), 500); }; })();
   const icon = K.icon;
   for (const [sel, ic] of [['#btn-menu', 'menu'], ['#b-prev', 'skip-back'], ['#b-next', 'skip-forward'], ['#b-subs', 'captions'], ['#b-audio', 'audio-lines'],
-    ['#b-shot', 'camera'], ['#b-settings', 'sliders-horizontal'], ['#b-list', 'list-video'], ['#b-mini', 'picture-in-picture-2'], ['#b-full', 'maximize'],
+    ['#b-shot', 'camera'], ['#b-settings', 'gear'], ['#b-list', 'list-video'], ['#b-mini', 'picture-in-picture-2'], ['#b-full', 'maximize'],
     ['[data-act=close-panel]', 'x'], ['[data-act=close-list]', 'x'], ['[data-act=pl-add]', 'plus'], ['[data-act=pl-folder]', 'folder-open'],
     ['#pl-shuffle', 'shuffle'], ['#pl-repeat', 'repeat'], ['[data-act=pl-save]', 'save'], ['[data-act=pl-clear]', 'trash-2']]) {
     document.querySelectorAll(sel).forEach(el => { el.innerHTML = icon(ic); });
@@ -84,7 +84,7 @@
 
   function movieBounds() {
     const controls = app.classList.contains('ui-visible');
-    const y = controls ? $('#titlebar').offsetHeight : 0;
+    const y = Math.max(controls ? $('#titlebar').offsetHeight : 0, $('#update-notice').hidden ? 0 : Math.ceil($('#update-notice').getBoundingClientRect().bottom));
     return { controls, x: 0, y, width: innerWidth, height: innerHeight - y - (controls ? $('#controls').offsetHeight : 0) };
   }
 
@@ -153,6 +153,7 @@
       if (!await window.kadr.playMovie(item.path, current.id, movieBounds(), S.muted ? 0 : S.volume)) return;
       if (current !== remote) return;
       current.ready = true;
+      void applyMovieQuality(current, undefined, 6).catch(() => {});
       captionAppearance();
       refreshMovieView();
       app.classList.remove('waiting');
@@ -594,7 +595,7 @@
   $('#b-full').onclick = () => window.kadr.fullscreen();
   $('#b-mini').onclick = () => toggleMini();
   $('#b-shot').onclick = () => screenshot();
-  $('#b-settings').onclick = () => togglePanel();
+  $('#b-settings').onclick = () => qualityMenu().catch(() => osd('Nie udało się odczytać jakości filmu.'));
   $('#b-list').onclick = () => toggleList();
   $('#b-speed').onclick = () => popup(speedMenu());
   $('#b-subs').onclick = () => openCaptions();
@@ -644,11 +645,11 @@
   });
 
   // ---------- menus ----------
-  const popup = async items => {
+  const popup = async (items, position) => {
     nativeMenuOpen = true;
     showUI();
     let id;
-    try { id = await window.kadr.menu(strip(items)); }
+    try { id = await window.kadr.menu(strip(items), position); }
     finally { nativeMenuOpen = false; showUI(); }
     if (!id) return;
     const f = findAction(items, id);
@@ -664,6 +665,129 @@
   }
   const radio = (label, checked, run) => mk(label, run, { type: 'radio', checked });
   const check = (label, checked, run, acc) => mk(label, run, { type: 'checkbox', checked, accelerator: acc });
+
+  const profileNames = { ...Object.fromEntries(Object.entries(K.qualityProfiles).map(([id,p]) => [id,p.label])), custom: 'Własne' };
+  const profileKeys = Object.keys(K.localProfile('best'));
+  const snapshotQuality = () => Object.fromEntries(profileKeys.map(key => [key, S[key]]));
+  if (!S.localProfileId) {
+    S.localProfileId = cfg.settings && profileKeys.some(key => key in cfg.settings && cfg.settings[key] !== K.DEFAULTS[key]) ? 'custom' : 'best';
+    S.customQuality = snapshotQuality();
+    if (S.localProfileId === 'best') Object.assign(S, K.localProfile('best'));
+  }
+  function chooseLocal(id, patch = {}) {
+    if (S.localProfileId === 'custom') S.customQuality = snapshotQuality();
+    const next = id === 'custom' ? { ...S.customQuality, ...patch } : K.localProfile(id);
+    const previous = snapshotQuality();
+    Object.assign(S, next, { localProfileId: id });
+    if (id === 'custom') S.customQuality = snapshotQuality();
+    saveSettings();
+    perfLevel = 0;                       // an explicit choice clears the automatic relief of this session
+    const relieved = !!engine.autoMaxHeight;
+    engine.autoMaxHeight = 0; engine.stalls = [];
+    if (previous.renderer !== S.renderer) setupRenderer();
+    dirty = true;
+    if (engine.info && engine.mode && !remote) {
+      const mode = engine.plan().mode;
+      if (mode !== engine.mode || (mode === 'encode' && (relieved || ['quality','maxHeight','interp'].some(k => previous[k] !== S[k])))) {
+        engine.wantPlay = !video.paused;
+        clearTimeout(replanTimer);
+        engine.replan();
+      }
+    }
+  }
+  async function applyMovieQuality(movie, id = S.movieProfileId || 'best', retries = 0) {
+    const cap = id === 'custom' ? S.customMovieCap ?? -1 : K.qualityProfiles[id].cap;
+    // the provider's player may list its variants a moment after playback starts
+    for (let i = 0; ; i++) {
+      const r = await window.kadr.movieAction(movie.id, 'quality', cap);
+      if (!r || remote !== movie || r.heights.length || i >= retries) return r;
+      await new Promise(res => setTimeout(res, 1500));
+    }
+  }
+  const SCALER_NAMES = { lanczos: 'Lanczos', spline36: 'Spline36', mitchell: 'Mitchell', catrom: 'Catmull-Rom', bilinear: 'dwuliniowe', nearest: 'najbliższy sąsiad' };
+  const MODE_NAMES = { direct: 'bez konwersji', copy: 'przepakowanie bez utraty jakości', encode: 'konwersja FFmpeg' };
+  // what the current profile really does right now (shown at the top of the gear menu)
+  function qualityEffect(movie, state) {
+    const id = movie ? S.movieProfileId || 'best' : S.localProfileId;
+    const name = profileNames[id] || profileNames.best;
+    if (movie) {
+      const h = state?.height;
+      const heights = state?.heights || [];
+      return [name + (h ? ' · ' + h + 'p' : ''),
+        heights.length > 1 ? 'Warianty źródła: ' + heights.map(x => x + 'p').join(', ')
+          : heights.length === 1 ? 'Źródło ma jedną jakość (' + heights[0] + 'p)'
+          : state?.auto ? 'Źródło oferuje tylko automat' : 'Źródło nie udostępnia wyboru jakości'];
+    }
+    const h = video.videoHeight;
+    const scaled = lastDst && video.videoWidth && (Math.abs(lastDst.w - video.videoWidth) > 1 || Math.abs(lastDst.h - video.videoHeight) > 1);
+    const rend = useGL() ? 'WebGL2 · ' + (scaled ? SCALER_NAMES[effScaler()] || effScaler() : 'bez skalowania') : 'renderer natywny';
+    const path = engine.mode ? MODE_NAMES[engine.mode] + (engine.mode === 'encode' ? ' (' + ({ max: 'maks.', balanced: 'zrównoważona', fast: 'szybka' }[S.quality] || S.quality) + ')' : '') : '';
+    return [name + (h ? ' · ' + h + 'p' : ''), [rend, path].filter(Boolean).join(' · ')];
+  }
+  // a native menu sits above the embedded movie view too; place it just above the bar, right-aligned with the gear
+  function menuAbove(items) {
+    // Windows 11 menu metrics (DIP): 28 per item, 17 per separator, ~23 of padding. If the estimate were too small the
+    // menu would not fit under the anchor and Windows would flip it upwards over the video, so it errs on the large side.
+    const n = items.filter(i => i.type !== 'separator').length, seps = items.length - n;
+    const h = n * 28 + seps * 17 + 24;
+    const r = $('#b-settings').getBoundingClientRect(), bar = $('#controls').getBoundingClientRect();
+    return { x: Math.max(0, Math.round(r.right - 300)), y: Math.max(0, Math.round(Math.min(r.top, bar.top) - h - 2)) };
+  }
+  async function qualityMenu() {
+    const movie = remote, item = cur;
+    const id = movie ? S.movieProfileId || 'best' : S.localProfileId;
+    const state = movie?.ready ? await window.kadr.movieAction(movie.id, 'quality') : null;
+    if (movie !== remote || item !== cur) return;
+    const items = qualityEffect(movie, state).map(t => mk(t, null, { enabled: false }));
+    items.push(sep);
+    const choose = async (key, cap) => {
+      if (item !== cur || movie !== remote) return;
+      if (!movie) { chooseLocal(key); return; }
+      if (cap != null) S.customMovieCap = cap;
+      const result = await applyMovieQuality(movie, key);
+      if (!result || remote !== movie) return;
+      S.movieProfileId = key;
+      saveSettings();
+      const [a] = qualityEffect(movie, result);
+      osd('Jakość: ' + a);
+    };
+    for (const [key, p] of Object.entries(K.qualityProfiles)) items.push(radio(p.label, id === key, () => choose(key)));
+    items.push(radio('Własne…', id === 'custom', async () => {
+      await choose('custom');
+      if (item === cur && movie === remote) await customQualityMenu(movie, movie ? await window.kadr.movieAction(movie.id, 'quality') : null);
+    }));
+    if (!movie) items.push(sep, mk('Ustawienia zaawansowane…', () => openPanel('picture')));
+    await popup(items, menuAbove(items));
+  }
+  // "Własne…": only the parameters that act in the current mode
+  async function customQualityMenu(movie, state) {
+    const items = [];
+    if (movie) {
+      const capNow = S.customMovieCap ?? -1;
+      const pick = cap => async () => {
+        S.customMovieCap = cap; S.movieProfileId = 'custom'; saveSettings();
+        const r = await applyMovieQuality(movie, 'custom');
+        if (r && remote === movie) osd('Jakość: ' + qualityEffect(movie, r)[0]);
+      };
+      if (state?.auto) items.push(radio('Automatycznie', capNow === -1, pick(-1)));
+      for (const h of (state?.heights || []).slice().reverse()) items.push(radio(h + 'p', capNow === h, pick(h)));
+      if (!items.length) items.push(mk('Źródło nie udostępnia wyboru jakości', null, { enabled: false }));
+    } else {
+      const set = patch => () => chooseLocal('custom', patch);
+      items.push(mk('Renderowanie', null, { enabled: false }));
+      items.push(radio('Natywny (najlżejszy)', S.renderer === 'native', set({ renderer: 'native' })));
+      for (const sc of ['lanczos', 'catrom', 'bilinear']) items.push(radio('WebGL2 · ' + SCALER_NAMES[sc], S.renderer === 'gl' && S.scaler === sc, set({ renderer: 'gl', scaler: sc })));
+      if (S.renderer === 'gl') items.push(check('Pomniejszanie w świetle liniowym', !!S.linear, set({ linear: !S.linear })));
+      if (engine.mode === 'encode') {
+        items.push(sep, mk('Konwersja FFmpeg (ten plik jej wymaga)', null, { enabled: false }));
+        for (const [q, label] of [['max', 'Jakość maksymalna'], ['balanced', 'Zrównoważona'], ['fast', 'Szybka (najlżejsza)']]) items.push(radio(label, S.quality === q, set({ quality: q })));
+        items.push(sep);
+        for (const [hgt, label] of [[0, 'Rozdzielczość źródła'], [1080, 'Do 1080p'], [720, 'Do 720p'], [480, 'Do 480p']]) items.push(radio(label, (+S.maxHeight || 0) === hgt, set({ maxHeight: hgt })));
+      }
+      items.push(sep, mk('Ustawienia zaawansowane…', () => openPanel('picture')));
+    }
+    await popup(items, menuAbove(items));
+  }
 
   function speedMenu() {
     const r = video.playbackRate || 1;
@@ -1392,6 +1516,7 @@
   let replanTimer;
   function setSetting(key, val, live) {
     S[key] = val;
+    if (profileKeys.includes(key)) { S.localProfileId = 'custom'; S.customQuality = snapshotQuality(); }
     if (['scaler', 'linear', 'smooth', 'renderer', 'renderScale'].includes(key)) perfLevel = 0;   // the user decides again
     if (!live) saveSettings(); else saveSettings();
     if (key === 'renderer') setupRenderer();
@@ -1466,11 +1591,64 @@
       about: body => renderAbout(body),
     });
   }
+  const notice = $('#update-notice');
+  let updateState = { phase: 'idle', message: '' }, laterVersion = '';
+  function showUpdate(state) {
+    updateState = state;
+    const about = $('#update-status');
+    if (about) about.textContent = state.message;
+    const offered = ['available', 'ready', 'downloading'].includes(state.phase);
+    notice.hidden = !offered || state.version === laterVersion;
+    $('#update-message').textContent = state.message + (state.version ? ' · ' + state.version : '');
+    $('#update-act').hidden = state.phase === 'downloading';
+    $('#update-act').textContent = state.phase === 'ready' ? 'Uruchom ponownie i zainstaluj' : 'Pobierz';
+    refreshMovieView();
+  }
+  window.kadr.onUpdate(showUpdate);
+  $('#update-later').onclick = () => { laterVersion = updateState.version; showUpdate(updateState); };
+  $('#update-act').onclick = async () => {
+    if (updateState.phase === 'ready') {
+      saveResume();
+      await Promise.all([window.kadr.saveState(ST), window.kadr.saveSettings(S)]);
+      await window.kadr.installUpdate();
+    } else if (updateState.phase === 'available') await window.kadr.downloadUpdate();
+  };
+  new ResizeObserver(refreshMovieView).observe(notice);
+  void window.kadr.checkUpdate().then(showUpdate);
+
+  // ---------- licence: asked once per computer (first start), kept in state.json ----------
+  const LICENSE_SHA256 = '1785cfc3bc6ac7738e8b38cdccd1af12563c2b9070e07af336a1bf8c0f772b6a';
+  async function licenseOk(code) {
+    const d = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(String(code).trim().toLowerCase()));
+    return [...new Uint8Array(d)].map(b => b.toString(16).padStart(2, '0')).join('') === LICENSE_SHA256;
+  }
+  function requireLicense() {
+    if (ST.license === LICENSE_SHA256) return Promise.resolve();
+    const dlg = $('#license-dialog'), input = $('#license-code'), err = $('#license-error');
+    return new Promise(resolve => {
+      dlg.addEventListener('cancel', e => e.preventDefault());     // Escape doesn't skip it
+      $('#license-form').onsubmit = async e => {
+        e.preventDefault();
+        if (!await licenseOk(input.value)) { err.hidden = false; input.select(); return; }
+        ST.license = LICENSE_SHA256;
+        await window.kadr.saveState(ST);
+        dlg.close();
+        resolve();
+      };
+      input.oninput = () => { err.hidden = true; };
+      dlg.showModal();
+      input.focus();
+    });
+  }
+
   function renderAbout(body) {
     const d = document.createElement('div');
     d.innerHTML = `
       <div class="about-head"><img src="img/logo.svg" alt=""><div><h3>Kadr</h3><span>wersja ${esc(cfg.version)}</span></div></div>
       <div class="info-box">Odtwarzacz wideo na Windows: każdy format dzięki <b>FFmpeg</b>, skalowanie Lanczos/Spline z poprawnym pomniejszaniem, wyostrzanie AMD RCAS, usuwanie pasm, płynny ruch, korektor dźwięku i napisy w polskich formatach.</div>
+      <div class="sec">Aktualizacje</div>
+      <button id="update-check" class="btn">Sprawdź aktualizacje</button>
+      <p id="update-status" role="status"></p>
       <div class="sec">Sponsorzy</div>
       <a class="sp-card pz" data-sp="pz"><img src="img/prozlecenie.png" alt=""><div><b>ProZlecenie.pl</b><small>Opisz robotę budowlaną lub remontową — fachowcy z Twojej okolicy sami zgłoszą się z ceną. Za darmo.</small></div><span class="go">Odwiedź →</span></a>
       <a class="sp-card cs" data-sp="cs"><span class="cs-logo"><img src="img/cyberscope.svg" alt=""></span><div><b>CyberScope.pl</b><small>Portal o cyberbezpieczeństwie: aktualności, analizy i poradniki — jak rozpoznać oszustwo i chronić swoje dane.</small></div><span class="go">Odwiedź →</span></a>
@@ -1506,6 +1684,8 @@
       <div class="info-box" id="tech-info">…</div>
       <div class="info-box">Kadr zawiera FFmpeg (licencja GPL v3, ffmpeg.org) oraz ikony Lucide (ISC). Inter — SIL Open Font License.</div>`;
     body.appendChild(d);
+    $('#update-status').textContent = updateState.message;
+    $('#update-check').onclick = async () => { laterVersion = ''; showUpdate(await window.kadr.checkUpdate()); };
     d.querySelectorAll('[data-sp]').forEach(a => { a.onclick = e => { e.preventDefault(); window.kadr.external(SPONSORS[a.dataset.sp]); }; });
     (async () => {
       const ver = await window.kadr.ffmpegVersion().catch(() => '?');
@@ -1587,7 +1767,7 @@
       el.innerHTML = icon(/^https?:/i.test(r.path) ? 'link' : isA ? 'music' : 'film');
       const meta = document.createElement('div'); meta.className = 'meta';
       const b = document.createElement('b'); b.textContent = r.title || baseName(r.path);
-      const s = document.createElement('span'); s.textContent = /^https?:/i.test(r.path) ? r.path : dirName(r.path);
+      const s = document.createElement('span'); s.textContent = r.catalog ? 'Katalog Kadr' : /^https?:/i.test(r.path) ? r.path : dirName(r.path);
       meta.append(b, s);
       el.appendChild(meta);
       const res = ST.resume[resumeKey(r.path)];
@@ -1648,7 +1828,7 @@
 
   // ---------- keyboard ----------
   document.addEventListener('keydown', e => {
-    if (document.querySelector('dialog[open]') || e.isComposing) return;
+    if (nativeMenuOpen || document.querySelector('dialog[open]') || e.isComposing) return;
     if (e.key !== 'Escape' && (document.querySelector('.drawer.open, .modal.open') || e.target.closest('input, select, textarea, [contenteditable="true"]'))) return;
     if (e.repeat && [' ', 'k', 'm', 'f', 'v'].includes(e.key.toLowerCase())) { e.preventDefault(); return; }
     const k = e.key, ctrl = e.ctrlKey, shift = e.shiftKey;
@@ -1779,10 +1959,11 @@
   renderRecent();
   renderPlaylist();
   window.addEventListener('beforeunload', () => { saveResume(); window.kadr.saveSettings(S); window.kadr.saveState(ST); });
-  if (cfg.open && cfg.open.length) openPaths(cfg.open);
+  requireLicense().then(() => { if (cfg.open && cfg.open.length) openPaths(cfg.open); });
 
   // test hooks (KADR_DEBUG=1)
-  window.app = { S, ST, engine, sound, get gl() { return gl; }, get cur() { return cur; }, get playlist() { return playlist; }, openPaths, playIndex, setSetting, selectSub, toggleStats, screenshot, toggleMini, seekBy, osd, togglePanel, openPanel, toggleList, popupItems: () => mainMenu(), autoCrop };
+  window.app = { S, ST, engine, sound, get gl() { return gl; }, get cur() { return cur; }, get playlist() { return playlist; }, openPaths, playIndex, setSetting, selectSub, toggleStats, screenshot, toggleMini, seekBy, osd, togglePanel, openPanel, toggleList, popupItems: () => mainMenu(), autoCrop,
+    quality: { choose: chooseLocal, effect: () => qualityEffect(remote, null), menu: qualityMenu, get lastDst() { return lastDst; }, get menuOpen() { return nativeMenuOpen; } } };
   if (cfg.debug) {
     const code = await window.kadr.test.script();
     if (code) { try { await new Function('app', 'K', `return (async () => { ${code} })()`)(window.app, K); } catch (e) { window.kadr.test.log('TEST ERROR ' + (e && e.stack || e)); window.kadr.test.quit(); } }

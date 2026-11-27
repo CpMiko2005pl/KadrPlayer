@@ -245,7 +245,7 @@ void main(){
       const rot = ((p.rot || 0) / 90 | 0) & 3;
       let sw = Math.max(1, Math.round(this.texW * crop.w)), sh = Math.max(1, Math.round(this.texH * crop.h));
       if (rot & 1) [sw, sh] = [sh, sw];
-      const kernel = KERNELS[p.scaler];
+      const kernel = (dw !== sw || dh !== sh) && KERNELS[p.scaler];
       const down = dw < sw || dh < sh;
       const linear = !!(p.linear && down && kernel && this.float);
       const c = p.color || {};

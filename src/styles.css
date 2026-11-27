@@ -142,7 +142,7 @@ button { font: inherit; color: inherit; }
 #app:not(.ui-visible) #controls, #app:not(.ui-visible) #titlebar { opacity: 0; pointer-events: none; }
 #app:not(.ui-visible) #controls { transform: translateY(8px); }
 #app.catalog-movie #controls { background: #0b0c10; }
-#app.catalog-movie :is(#b-shot, #b-audio, #b-speed, #b-settings) { display: none; }
+#app.catalog-movie :is(#b-shot, #b-audio, #b-speed) { display: none; }
 #app:not(.ui-visible):not(.empty) #stage { cursor: none; }
 #app.empty #titlebar { background: transparent; }
 
@@ -375,3 +375,13 @@ input[type=color] { width: 38px; height: 28px; border: 1px solid var(--line2); b
 #captions-progress { width:100%; margin-top:10px; }
 
 #captions-form { border:0; padding:0; margin:0; min-width:0; }
+
+#license-dialog { width: min(420px, 92vw); color: var(--text); color-scheme: dark; background: var(--panel-solid); border: 1px solid var(--line2); border-radius: 16px; padding: 22px; }
+#license-dialog::backdrop { background: rgba(0,0,0,.85); }
+#license-dialog label { display: grid; gap: 5px; margin: 12px 0; }
+#license-dialog input { width: 100%; padding: 9px 12px; font-size: 15px; border-radius: 8px; border: 1px solid var(--line2); background: #0d0f14; color: var(--text); }
+#license-error { color: #ff8a7a; margin: 0 0 8px; }
+#license-error[hidden] { display: none; }
+
+#update-notice { position:absolute; z-index:50; top:38px; right:8px; max-width:calc(100% - 16px); padding:8px 12px; display:flex; align-items:center; flex-wrap:wrap; gap:8px; border:1px solid var(--line2); border-radius:8px; background:#20232c; color:#fff; }
+#update-notice[hidden], #update-act[hidden] { display:none; }

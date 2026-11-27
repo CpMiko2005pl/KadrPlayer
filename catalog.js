@@ -3,6 +3,7 @@ const { setTimeout: delay } = require('node:timers/promises');
 
 const { movieCaptions, captureMovieAudio } = require('./captions');
 const path = require('node:path');
+const { movieQuality } = require('./src/js/quality');
 const origin = 'https://hydrahd.com';
 // The .com catalog redirects movie pages to a playback domain listed on hydrahd.info.
 const movieOrigins = new Set([origin, 'https://hydrahd.gd', 'https://hydrahd.ac', 'https://hydrahd.cc',
@@ -303,6 +304,7 @@ async function movieAction(id, action, value) {
     return null;
   }
   if (!p.frame) return null;
+  if (action === 'quality') return p.frame.executeJavaScript('(' + movieQuality + ')(' + (Number.isFinite(value) ? Number(value) : 'undefined') + ')');
   if (action === 'caption-list' || ['caption-versions', 'caption-style', 'caption-apply', 'caption-dismiss'].includes(action) || action === 'caption-select' || action === 'caption-add') {
     return p.frame.executeJavaScript(`(${movieCaptions})(${JSON.stringify(action.slice(8))},${JSON.stringify(value)})`, true);
   }

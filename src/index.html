@@ -15,6 +15,10 @@
     <div id="title-text"></div>
   </header>
 
+  <aside id="update-notice" hidden aria-label="Aktualizacja">
+    <span id="update-message" role="status"></span>
+    <button class="btn small" id="update-act">Pobierz</button><button class="btn small ghost" id="update-later">Później</button>
+  </aside>
   <main id="stage">
     <video id="video" playsinline preload="auto"></video>
     <canvas id="gl"></canvas>
@@ -82,9 +86,9 @@
         <button id="b-subs" class="cb" aria-label="Napisy Kadr" data-tip="Napisy Kadr"></button>
         <button id="b-audio" class="cb" data-tip="Ścieżka dźwiękowa (B)"></button>
         <button id="b-shot" class="cb" data-tip="Zrzut klatki (S)"></button>
-        <button id="b-settings" class="cb" data-tip="Ustawienia obrazu i dźwięku (Ctrl+,)"></button>
         <button id="b-list" class="cb" data-tip="Lista odtwarzania (P)"></button>
         <button id="b-mini" class="cb" data-tip="Mini odtwarzacz (Ctrl+M)"></button>
+        <button id="b-settings" class="cb" aria-label="Jakość i wydajność" aria-haspopup="menu" data-tip="Jakość i wydajność"></button>
         <button id="b-full" class="cb" data-tip="Pełny ekran (F)"></button>
       </div>
     </div>
@@ -116,6 +120,15 @@
   </div></div>
 
   <div id="tooltip"></div>
+  <dialog id="license-dialog" aria-labelledby="license-title">
+    <form id="license-form" method="dialog">
+      <div class="about-head"><img src="img/logo.svg" alt=""><div><h3 id="license-title">Aktywacja Kadr</h3><span>pierwsze uruchomienie</span></div></div>
+      <p class="muted">Wpisz kod licencyjny, aby korzystać z programu. Kod podaje się tylko raz na tym komputerze.</p>
+      <label>Kod licencyjny <input id="license-code" type="password" autocomplete="off" spellcheck="false" required maxlength="128"></label>
+      <p id="license-error" role="alert" hidden>Nieprawidłowy kod licencyjny.</p>
+      <div class="modal-actions"><button class="btn primary" id="license-ok">Aktywuj</button></div>
+    </form>
+  </dialog>
   <dialog id="captions-dialog" aria-labelledby="captions-title">
     <header><h2 id="captions-title">Napisy Kadr</h2><button id="captions-close" class="cb" aria-label="Wróć do filmu">×</button></header>
     <fieldset id="captions-form" aria-label="Ustawienia napisów">
@@ -193,6 +206,7 @@
 <script src="js/engine.js"></script>
 <script src="js/settings.js"></script>
 <script src="js/catalog.js"></script>
+<script src="js/quality.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>

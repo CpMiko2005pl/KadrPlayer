@@ -1,0 +1,78 @@
+name: Wydanie Kadr
+# Tag vX.Y.Z (zgodny z "version" w package.json) → testy, instalator NSIS, latest.yml i .blockmap.
+# Wydanie powstaje jako szkic i staje się „latest” (widoczne dla aktualizatora) dopiero po wysłaniu wszystkich plików.
+on:
+  push:
+    tags: ['v*.*.*']
+permissions:
+  contents: write
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+env:
+  FFMPEG_VERSION: 9.0.2
+jobs:
+  windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Sprawdź tag i zainstaluj zależności
+        shell: pwsh
+        run: |
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          if ("v$version" -cne $env:GITHUB_REF_NAME -or $version -notmatch '^\d+\.\d+\.\d+$') { throw "Tag $env:GITHUB_REF_NAME nie zgadza się z wersją $version w package.json." }
+          npm ci
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Testy
+        shell: pwsh
+        run: |
+          node scripts/check-captions.js
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          node scripts/check-quality-updates.js
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: FFmpeg (Gyan full build, z filtrem whisper)
+        shell: pwsh
+        run: |
+          $zip = "$env:RUNNER_TEMP/ffmpeg.zip"
+          gh release download $env:FFMPEG_VERSION -R GyanD/codexffmpeg -p "ffmpeg-$env:FFMPEG_VERSION-full_build.zip" -O $zip
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          Expand-Archive $zip "$env:RUNNER_TEMP/ffmpeg"
+          $bin = (Get-ChildItem "$env:RUNNER_TEMP/ffmpeg" -Recurse -Filter ffmpeg.exe | Select-Object -First 1).DirectoryName
+          if (!$bin) { throw 'Brak ffmpeg.exe w archiwum' }
+          $filters = & "$bin/ffmpeg.exe" -hide_banner -filters | Out-String
+          if ($filters -notmatch '\bwhisper\b') { throw 'FFmpeg nie ma filtra whisper (napisy Kadr)' }
+          "KADR_FFMPEG_DIR=$bin" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: Instalator x64
+        shell: pwsh
+        run: |
+          npm run installer
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          node scripts/verify-release.js
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Wyślij komplet plików i opublikuj wydanie
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          $exe = "Kadr-Player-Setup-$($tag.Substring(1)).exe"
+          $files = @("dist/$exe", "dist/$exe.blockmap", 'dist/latest.yml')
+          foreach ($file in $files) { if (!(Test-Path -LiteralPath $file -PathType Leaf) -or !(Get-Item -LiteralPath $file).Length) { throw "Brak $file" } }
+          $draft = gh release view $tag --json isDraft --jq .isDraft
+          if ($LASTEXITCODE) {
+            gh release create $tag --draft --verify-tag --title "Kadr Player $($tag.Substring(1))" --generate-notes
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          } elseif ($draft -ne 'true') { throw "Wydanie $tag jest już opublikowane." }
+          gh release upload $tag @files --clobber
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $assets = gh release view $tag --json assets --jq '.assets[].name'
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          foreach ($file in $files) { if ((Split-Path $file -Leaf) -notin $assets) { throw "Brak zasobu $file w wydaniu" } }
+          gh release edit $tag --draft=false --latest
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }

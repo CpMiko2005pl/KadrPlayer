@@ -152,7 +152,7 @@ class Media {
     if (s.video === 'encode') {
       if (s.deint) vf.push('bwdif=mode=send_field:deint=interlaced');
       if (s.tonemap) vf.push('zscale=t=linear:npl=100', 'format=gbrpf32le', 'zscale=p=bt709', 'tonemap=tonemap=hable:desat=0', 'zscale=t=bt709:m=bt709:r=tv');
-      if (s.maxHeight && s.height > s.maxHeight) vf.push(`scale=-2:${s.maxHeight}:flags=lanczos`);
+      if (s.maxHeight && s.height > s.maxHeight) vf.push(`scale=-2:${s.maxHeight}:flags=${s.quality === 'fast' ? 'fast_bilinear' : 'lanczos'}`);
       if (s.interp && s.interp.fps) {
         vf.push(s.interp.mode === 'mci'
           ? `minterpolate=fps=${s.interp.fps}:mi_mode=mci:mc_mode=aobmc:me_mode=bidir:vsbmc=1`

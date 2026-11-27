@@ -1,7 +1,7 @@
 {
   "name": "kadr-player",
   "productName": "Kadr",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "Odtwarzacz wideo na Windows: każdy format (ffmpeg), skalowanie wysokiej jakości (Lanczos, FSR), płynny ruch, korektor dźwięku i napisy",
   "main": "main.js",
   "author": "BiNoX",
@@ -11,7 +11,7 @@
     "icon": "electron scripts/make-icon.js",
     "installer-art": "electron scripts/make-installer-art.js",
     "ffmpeg": "node scripts/copy-ffmpeg.js",
-    "installer": "node scripts/copy-ffmpeg.js && electron-builder --win nsis --x64"
+    "installer": "node scripts/copy-ffmpeg.js && electron-builder --win nsis --x64 --publish never"
   },
   "build": {
     "appId": "fun.tacticalops.kadrplayer",
@@ -37,7 +37,8 @@
       "package.json",
       "src/**/*",
       "build/icon.ico",
-      "build/icon.png"
+      "build/icon.png",
+      "updates.js"
     ],
     "extraResources": [
       {
@@ -52,8 +53,36 @@
     "fileAssociations": [
       {
         "ext": [
-          "mp4", "m4v", "mkv", "webm", "avi", "mov", "wmv", "flv", "f4v", "mpg", "mpeg", "m2v",
-          "ts", "m2ts", "mts", "vob", "3gp", "3g2", "ogv", "divx", "xvid", "rm", "rmvb", "asf", "dv", "mxf", "y4m", "hevc", "264", "265"
+          "mp4",
+          "m4v",
+          "mkv",
+          "webm",
+          "avi",
+          "mov",
+          "wmv",
+          "flv",
+          "f4v",
+          "mpg",
+          "mpeg",
+          "m2v",
+          "ts",
+          "m2ts",
+          "mts",
+          "vob",
+          "3gp",
+          "3g2",
+          "ogv",
+          "divx",
+          "xvid",
+          "rm",
+          "rmvb",
+          "asf",
+          "dv",
+          "mxf",
+          "y4m",
+          "hevc",
+          "264",
+          "265"
         ],
         "name": "KadrPlayer.Video",
         "description": "Plik wideo (Kadr)",
@@ -61,7 +90,21 @@
       },
       {
         "ext": [
-          "mp3", "flac", "m4a", "aac", "ogg", "opus", "wav", "wma", "ac3", "dts", "ape", "wv", "mka", "aiff", "alac"
+          "mp3",
+          "flac",
+          "m4a",
+          "aac",
+          "ogg",
+          "opus",
+          "wav",
+          "wma",
+          "ac3",
+          "dts",
+          "ape",
+          "wv",
+          "mka",
+          "aiff",
+          "alac"
         ],
         "name": "KadrPlayer.Audio",
         "description": "Plik dźwiękowy (Kadr)",
@@ -108,13 +151,25 @@
       "installerSidebar": "build/installerSidebar.bmp",
       "uninstallerSidebar": "build/installerSidebar.bmp",
       "installerHeader": "build/installerHeader.bmp",
-      "include": "build/installer.nsh"
-    }
+      "include": "build/installer.nsh",
+      "differentialPackage": true
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "CpMiko2005pl",
+        "repo": "KadrPlayer",
+        "releaseType": "release"
+      }
+    ]
   },
   "devDependencies": {
     "@fontsource/inter": "^5.1.0",
     "electron": "33.2.1",
     "electron-builder": "26.15.3",
     "rcedit": "^4.0.1"
+  },
+  "dependencies": {
+    "electron-updater": "6.8.9"
   }
 }

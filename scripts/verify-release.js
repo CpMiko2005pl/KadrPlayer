@@ -1,0 +1,17 @@
+const fs = require('node:fs');
+const path = require('node:path');
+const crypto = require('node:crypto');
+const assert = require('node:assert/strict');
+const { version } = require('../package.json');
+const name = 'Kadr-Player-Setup-' + version + '.exe';
+const dir = path.join(__dirname,'..','dist');
+const manifest = require('js-yaml').load(fs.readFileSync(path.join(dir,'latest.yml'),'utf8'));
+const asset = manifest.files.find(f => f.url === name);
+assert.equal(manifest.version, version);
+assert.ok(asset);
+const exe = fs.readFileSync(path.join(dir,name));
+assert.equal(asset.size, exe.length);
+assert.equal(asset.sha512, crypto.createHash('sha512').update(exe).digest('base64'));
+const map = JSON.parse(require('node:zlib').gunzipSync(fs.readFileSync(path.join(dir,name+'.blockmap'))));
+assert.ok(map.files.length);
+console.log('Zweryfikowano instalator, latest.yml i blockmap dla ' + version);
