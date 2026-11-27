@@ -126,23 +126,18 @@ async function prepareVideo(p) {
 }
 
 async function startProvider(p, address) {
-  let loadError;
-  p.contents.loadURL(address).catch(err => { loadError = err; });
-  while (!p.abort.signal.aborted) {
-    if (loadError) throw loadError;
-    if (movieAddress(p.contents.getURL())) {
-      const started = await p.contents.mainFrame.executeJavaScript(`(() => {
-        if (document.readyState === 'loading') return false;
-        if (document.querySelector('video')) return true;
-        const play = document.querySelector('.video-play-button');
-        if (!play) return false;
-        play.click();
-        return true;
-      })()`, true).catch(() => false);
-      if (started) return;
-    }
-    await delay(400, undefined, { signal: p.abort.signal });
-  }
+  const contents = p.contents;
+  await new Promise((resolve, reject) => {
+    p.abort.signal.addEventListener('abort', () => reject(new Error('Przerwano wczytywanie filmu.')), { once: true });
+    contents.once('dom-ready', () => resolve());
+    contents.loadURL(address).catch(reject);
+  });
+  const started = await contents.mainFrame.executeJavaScript(`(() => {
+    const play = document.querySelector('.video-play-button');
+    if (play) play.click();
+    return !!play || !!document.querySelector('video');
+  })()`, true);
+  if (!started) throw new Error('Serwis nie udostępnił odtwarzacza.');
 }
 
 async function openMovie(parent, address, id, bounds, volume) {
