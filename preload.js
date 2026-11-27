@@ -20,6 +20,7 @@ contextBridge.exposeInMainWorld('kadr', {
   seriesDetails: call('catalog:series'),
   playMovie: call('catalog:play'),
   movieAction: call('catalog:action'),
+  onMovieStage: on('catalog:stage'),
   onMovieKey: on('catalog:key'),
   onMoviePointer: on('catalog:pointer'),
   onMovieMenu: on('catalog:menu'),

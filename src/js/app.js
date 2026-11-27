@@ -85,7 +85,7 @@
   function movieBounds() {
     const controls = app.classList.contains('ui-visible');
     const y = controls ? $('#titlebar').offsetHeight : 0;
-    return { x: 0, y, width: innerWidth, height: innerHeight - y - (controls ? $('#controls').offsetHeight : 0) };
+    return { controls, x: 0, y, width: innerWidth, height: innerHeight - y - (controls ? $('#controls').offsetHeight : 0) };
   }
 
   function closeRemote() {
@@ -99,9 +99,17 @@
   function refreshMovieView() {
     if (!remote) return;
     const id = remote.id;
-    window.kadr.movieAction(id, 'bounds', movieBounds()).catch(() => {});
+    const bounds = movieBounds();
+    const old = remote.bounds;
+    if (!old || bounds.width !== old.width || bounds.height !== old.height || bounds.y !== old.y || bounds.controls !== old.controls) {
+      remote.bounds = bounds;
+      window.kadr.movieAction(id, 'bounds', bounds).catch(() => {});
+    }
     const visible = !$('#captions-dialog').open && !$('#catalog').open && !document.querySelector('.drawer.open, .modal.open') && !app.classList.contains('error');
-    window.kadr.movieAction(id, 'visible', visible).catch(() => {});
+    if (visible !== remote.visible) {
+      remote.visible = visible;
+      window.kadr.movieAction(id, 'visible', visible).catch(() => {});
+    }
   }
   const movieObserver = new MutationObserver(refreshMovieView);
   for (const el of document.querySelectorAll('#catalog, #captions-dialog, .drawer, #modal')) movieObserver.observe(el, { attributes: true, attributeFilter: ['open', 'class'] });
@@ -115,9 +123,11 @@
       if (current !== remote) return;
       if (!state) throw new Error('Brak obrazu.');
       const ended = state.ended && !current.ended;
+      const pausedChanged = state.paused !== current.paused;
       Object.assign(current, state);
-      updateTimeUI();
-      setPlayIcon();
+      if (pausedChanged) { setPlayIcon(); showUI(); }
+      if (app.classList.contains('ui-visible')) updateTimeUI();
+      rememberPosition();
       if (ended && !generating) onEnded();
     } catch {
       if (current === remote) movieFailed();
@@ -149,7 +159,8 @@
       if (start) await controlMovie('seek', start);
       while (current === remote) {
         await controlMovie('status');
-        await new Promise(resolve => setTimeout(resolve, 350));
+        const delay = current.providerMenuOpen || (!current.paused && app.classList.contains('ui-visible')) ? 350 : 1000;
+        await new Promise(resolve => setTimeout(resolve, delay));
       }
     } catch {
       if (current === remote) movieFailed();
@@ -185,22 +196,29 @@
   document.addEventListener('mousedown', () => tip.classList.remove('on'));
 
   // ---------- UI auto-hide ----------
-  let hideTimer;
-  const overUI = () => document.querySelector('#controls:hover, #titlebar:hover, .drawer.open, .modal.open') !== null;
+  let hideTimer, nativeMenuOpen = false;
+  // Chromium can leave :hover on the toolbar when a native movie view takes the pointer.
+  let pointerOverControls = false;
+  const overUI = () => pointerOverControls || !!document.querySelector('.drawer.open, .modal.open');
   function showUI() {
-    if (!app.classList.contains('ui-visible')) { app.classList.add('ui-visible'); layoutSubs(); refreshMovieView(); window.kadr.overlay({ color: '#00000000', symbolColor: '#d7dbe4', height: 38 }); }
+    if (!app.classList.contains('ui-visible')) { app.classList.add('ui-visible'); updateTimeUI(); layoutSubs(); refreshMovieView(); window.kadr.overlay({ color: '#00000000', symbolColor: '#d7dbe4', height: 38 }); }
     clearTimeout(hideTimer);
     hideTimer = setTimeout(maybeHide, app.classList.contains('mini') ? 1600 : 2600);
   }
   function maybeHide() {
-    if (playbackPaused() || app.classList.contains('empty') || overUI() || $('#catalog').open || seekDrag || volDrag) { hideTimer = setTimeout(maybeHide, 1200); return; }
+    if (playbackPaused() || app.classList.contains('empty')) return;
+    if (overUI() || document.querySelector('dialog[open]') || nativeMenuOpen || remote?.providerMenuOpen || seekDrag || volDrag) { hideTimer = setTimeout(maybeHide, 1200); return; }
     app.classList.remove('ui-visible');
     tip.classList.remove('on');
     layoutSubs();
     refreshMovieView();
     if (!app.classList.contains('fullscreen')) window.kadr.overlay({ color: '#00000000', symbolColor: '#00000000', height: 38 });
   }
-  document.addEventListener('mousemove', showUI);
+  document.addEventListener('pointermove', e => {
+    pointerOverControls = !!e.target.closest('#controls, #titlebar');
+    showUI();
+  });
+  document.addEventListener('pointerout', e => { if (!e.relatedTarget) pointerOverControls = false; });
   app.classList.add('ui-visible');
 
   // ---------- layout ----------
@@ -371,7 +389,9 @@
     lastDraw = now; drawCount++;
   }
   function loop(now) {
-    requestAnimationFrame(loop);
+    renderFrame = 0;
+    if (!cur || cur.item.catalog) { lastRaf = 0; return; }
+    renderFrame = requestAnimationFrame(loop);
     if (lastRaf) {
       const d = (now - lastRaf) / 1000;
       if (d > 0.003 && d < 0.1) { vsyncSamples.push(d); if (vsyncSamples.length > 60) vsyncSamples.shift(); }
@@ -392,7 +412,7 @@
     if (rectChanged()) layoutSubs();
     if (cur && cur.cues) subsView.render(video.currentTime - (cur.subDelay || 0));
     if (app.classList.contains('audio-only')) drawViz();
-    if (now - lastUi > 120) { lastUi = now; updateTimeUI(); }
+    if (now - lastUi > 120) { lastUi = now; if (app.classList.contains('ui-visible')) updateTimeUI(); rememberPosition(); }
     if (app.classList.contains('stats') && now - lastStats > 500) { lastStats = now; updateStats(); }
   }
   let lastUi = 0, lastStats = 0, lastRectKey = '';
@@ -401,7 +421,7 @@
     if (k === lastRectKey) return false;
     lastRectKey = k; return true;
   }
-  requestAnimationFrame(loop);
+  let renderFrame = 0;
 
   // music visualiser
   const viz = $('#viz');
@@ -431,8 +451,10 @@
   function updateTimeUI() {
     if (!cur) return;
     const d = playbackDuration(), t = seekDrag ? seekDragT : playbackTime();
-    $('#t-cur').textContent = fmt(t);
-    $('#t-dur').textContent = d ? (showRemaining ? '-' + fmt(d - t) : fmt(d)) : '—';
+    const clock = $('#t-cur'), duration = $('#t-dur');
+    const timeText = fmt(t), durationText = d ? (showRemaining ? '-' + fmt(d - t) : fmt(d)) : '—';
+    if (clock.textContent !== timeText) clock.textContent = timeText;
+    if (duration.textContent !== durationText) duration.textContent = durationText;
     const p = d ? clamp(t / d, 0, 1) * 100 : 0;
     seekEl.querySelector('.played').style.width = p + '%';
     seekEl.querySelector('.knob').style.left = p + '%';
@@ -444,12 +466,16 @@
       buf.textContent = '';
       for (const [a, b] of ranges) { const i = document.createElement('i'); i.style.left = (a / d * 100) + '%'; i.style.width = ((b - a) / d * 100) + '%'; buf.appendChild(i); }
     }
-    if (cur && !playbackPaused() && ++resumeTick % 40 === 0) saveResume();
   }
-  let resumeTick = 0;
+  let lastResume = 0;
+  function rememberPosition() {
+    const now = performance.now();
+    if (!playbackPaused() && now - lastResume >= 5000) { lastResume = now; saveResume(); }
+  }
   $('#time').onclick = () => { showRemaining = !showRemaining; updateTimeUI(); };
   let seekDragT = 0;
   const seekTimeAt = x => { const r = seekEl.getBoundingClientRect(); return clamp((x - r.left) / r.width, 0, 1) * playbackDuration(); };
+  seekEl.addEventListener('lostpointercapture', () => { if (seekDrag) { seekDrag = false; seekEl.classList.remove('drag'); showUI(); } });
   let liveSeekT = 0;
   seekEl.addEventListener('pointerdown', e => {
     if (!cur || !playbackDuration() || e.button !== 0) return;
@@ -460,7 +486,7 @@
     hoverTip(e.clientX);
     if (!seekDrag) return;
     seekDragT = seekTimeAt(e.clientX); updateTimeUI();
-    if (engine.mode === 'direct' && performance.now() - liveSeekT > 120) { liveSeekT = performance.now(); video.currentTime = seekDragT; }
+    if (!remote && engine.mode === 'direct' && performance.now() - liveSeekT > 120) { liveSeekT = performance.now(); video.currentTime = seekDragT; }
   });
   seekEl.addEventListener('pointerup', e => {
     if (!seekDrag) return;
@@ -529,7 +555,7 @@
   const volAt = x => { const r = volEl.getBoundingClientRect(); return clamp((x - r.left) / r.width, 0, 1) * (+S.volumeMax || 1); };
   volEl.addEventListener('pointerdown', e => { volDrag = true; volEl.setPointerCapture(e.pointerId); setVolume(volAt(e.clientX), false); });
   volEl.addEventListener('pointermove', e => { if (volDrag) setVolume(volAt(e.clientX), false); });
-  volEl.addEventListener('pointerup', () => { volDrag = false; });
+  volEl.addEventListener('lostpointercapture', () => { volDrag = false; showUI(); });
   $('#vol').addEventListener('wheel', e => { e.preventDefault(); e.stopPropagation(); setVolume(S.volume + (e.deltaY < 0 ? 0.05 : -0.05)); }, { passive: false });
   $('#b-mute').onclick = () => { S.muted = !S.muted; applyVolume(); saveSettings(); osd(S.muted ? 'Wyciszono' : `Głośność ${Math.round(S.volume * 100)}%`); };
 
@@ -543,7 +569,7 @@
   function seekBy(d) {
     if (!cur || (!remote && !engine.mode)) return;
     const t = clamp(playbackTime() + d, 0, playbackDuration() || Infinity);
-    seekPlayback(t, Math.abs(d) < 3);
+    if (remote) controlMovie('seek-by', d); else seekPlayback(t, Math.abs(d) < 3);
     osd(`${d > 0 ? '+' : '−'}${Math.abs(d)} s`, fmt(t) + ' / ' + fmt(playbackDuration()), 900);
   }
   function setSpeed(r) {
@@ -618,7 +644,11 @@
 
   // ---------- menus ----------
   const popup = async items => {
-    const id = await window.kadr.menu(strip(items));
+    nativeMenuOpen = true;
+    showUI();
+    let id;
+    try { id = await window.kadr.menu(strip(items)); }
+    finally { nativeMenuOpen = false; showUI(); }
     if (!id) return;
     const f = findAction(items, id);
     if (f) f();
@@ -1137,6 +1167,7 @@
     clearThumbs();
     const c = { item, info: null, crop: null, pan: { x: 0, y: 0 }, subTracks: [], subSel: -1, subDelay: 0, cues: null, firstFrame: true };
     cur = c;
+    if (!item.catalog && !renderFrame) renderFrame = requestAnimationFrame(loop);
     app.classList.toggle('catalog-selection', !!item.catalog);
     subsView.clear();
     app.classList.remove('empty', 'error', 'audio-only');
@@ -1229,7 +1260,7 @@
   }
 
   // ---------- video events ----------
-  video.addEventListener('play', () => { setPlayIcon(); powerSync(); if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing'; });
+  video.addEventListener('play', () => { setPlayIcon(); powerSync(); showUI(); if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing'; });
   video.addEventListener('pause', () => { setPlayIcon(); powerSync(); showUI(); saveResume(); if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused'; });
   video.addEventListener('ratechange', setPlayIcon);
   video.addEventListener('waiting', () => app.classList.add('waiting'));
@@ -1523,8 +1554,9 @@
 
   // ---------- keyboard ----------
   document.addEventListener('keydown', e => {
-    if ($('#catalog').open || $('#captions-dialog').open) return;
-    if (e.target.matches('input, select, textarea')) return;
+    if (document.querySelector('dialog[open]') || e.isComposing) return;
+    if (e.key !== 'Escape' && (document.querySelector('.drawer.open, .modal.open') || e.target.closest('input, select, textarea, [contenteditable="true"]'))) return;
+    if (e.repeat && [' ', 'k', 'm', 'f', 'v'].includes(e.key.toLowerCase())) { e.preventDefault(); return; }
     const k = e.key, ctrl = e.ctrlKey, shift = e.shiftKey;
     let handled = true;
     showUI();
@@ -1567,7 +1599,7 @@
     else if (k === ']') setSpeed((video.playbackRate || 1) + 0.1);
     else if (k === 'Backspace') { if (cur?.item.catalog) returnToCatalog(); else setSpeed(1); }
     else if (k === 's' || k === 'S') screenshot();
-    else if (k.toLowerCase() === 'v') remote ? openCaptions() : cycleSub();
+    else if (k === 'v' || (remote && k === 'V')) $('#b-subs').click();
     else if (k === 'V') selectSub(-1);
     else if (k === 'b' || k === 'B') cycleAudio();
     else if (k === 'z' || k === 'Z') subDelay(-0.1);
@@ -1624,7 +1656,10 @@
 
   window.kadr.onOpen(({ files, replace }) => openPaths(files, { append: !replace }));
   window.kadr.onMovieKey(key => app.dispatchEvent(new KeyboardEvent('keydown', { ...key, bubbles: true })));
-  window.kadr.onMoviePointer(() => { if (remote) showUI(); });
+  window.kadr.onMovieStage(action => {
+    if (remote) stage.dispatchEvent(new MouseEvent(action, { bubbles: true }));
+  });
+  window.kadr.onMoviePointer(() => { if (remote) { pointerOverControls = false; showUI(); } });
   window.kadr.onMovieMenu(() => { if (remote) { showUI(); popup(mainMenu()); } });
 
   // the GPU process died while Chromium decoded this codec → never trust its hardware decoder for it again
