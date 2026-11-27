@@ -1,5 +1,6 @@
 // Kadr — updates from the public GitHub releases of CpMiko2005pl/KadrPlayer (electron-updater, NSIS).
-// Nothing is downloaded or installed without the user's click; the movie keeps playing until "restart and install".
+// Updates are mandatory: a newer release is downloaded at once and installed when Kadr is idle (nothing playing),
+// on the user's click, or at the latest when Kadr is closed; a movie that is playing is never interrupted.
 function createUpdates({ getUpdater, installed, notify }) {
   let updater, checking, downloading;
   let state = { phase: 'idle', version: '', message: '' };
@@ -22,14 +23,14 @@ function createUpdates({ getUpdater, installed, notify }) {
     if (updater) return updater;
     updater = getUpdater();
     updater.logger = null;
-    updater.autoDownload = false;
-    updater.autoInstallOnAppQuit = false;
+    updater.autoDownload = false;            // download() below, so progress and errors go through the same path
+    updater.autoInstallOnAppQuit = true;     // closing Kadr with a downloaded update installs it
     updater.allowPrerelease = false;
     updater.on('error', fail);
-    updater.on('update-available', info => publish('available', 'Dostępna aktualizacja Kadr Player', info.version));
+    updater.on('update-available', info => { publish('available', 'Wymagana aktualizacja Kadr Player', info.version); setTimeout(download, 0); });
     updater.on('update-not-available', () => publish('current', 'Masz aktualną wersję Kadr.', ''));
-    updater.on('download-progress', p => publish('downloading', 'Pobieranie aktualizacji · ' + Math.floor(p.percent) + '%'));
-    updater.on('update-downloaded', info => publish('ready', 'Aktualizacja jest gotowa.', info.version));
+    updater.on('download-progress', p => publish('downloading', 'Pobieranie wymaganej aktualizacji · ' + Math.floor(p.percent) + '%'));
+    updater.on('update-downloaded', info => publish('ready', 'Wymagana aktualizacja Kadr Player jest gotowa', info.version));
     return updater;
   }
   async function check() {
@@ -47,7 +48,7 @@ function createUpdates({ getUpdater, installed, notify }) {
   }
   async function download() {
     if (state.phase !== 'available' || downloading) return state;
-    publish('downloading', 'Pobieranie aktualizacji…');
+    publish('downloading', 'Pobieranie wymaganej aktualizacji…');
     downloading = Promise.resolve().then(() => client().downloadUpdate());
     try { await downloading; } catch (e) { fail(e); } finally { downloading = null; }
     return state;

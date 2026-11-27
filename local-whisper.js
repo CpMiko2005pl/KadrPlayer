@@ -63,7 +63,12 @@ async function recognize(ffmpeg, directory, audio, signal) {
     await fs.writeFile(input, audio, { signal, flag: 'wx' });
     await run(ffmpeg, ['-nostdin', '-v', 'error', '-i', input, '-vn', '-af',
       'asetpts=PTS-STARTPTS,whisper=model=' + model + ':language=auto:use_gpu=0:queue=12:format=srt:destination=' + output,
-      '-f', 'null', '-'], { cwd: directory, windowsHide: true, signal });
+      '-f', 'null', '-'], {
+      cwd: directory, windowsHide: true, signal,
+      // whisper.cpp in ffmpeg probes Vulkan devices even with use_gpu=0, and that probe crashes (0xC0000005)
+      // on some drivers, e.g. Intel HD 520; recognition runs on the CPU anyway
+      env: { ...process.env, GGML_DISABLE_VULKAN: '1' },
+    });
     return segmentsFromSrt(await fs.readFile(path.join(directory, output), 'utf8'));
   } catch (error) {
     if (signal.aborted) throw Error('Anulowano generowanie napisów.');

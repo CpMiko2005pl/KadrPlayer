@@ -36,9 +36,10 @@ async function test() {
   const opts = { installed:true, getUpdater:()=>c, notify:s=>notified.push(s) };
   const u = createUpdates(opts);
   assert.equal((await u.check()).phase,'available');
-  assert.equal(c.autoDownload,false); assert.equal(c.autoInstallOnAppQuit,false);
-  assert.equal(downloads,0); u.install(); assert.equal(installs.length,0);      // nothing before the user's click
-  assert.equal((await u.download()).phase,'ready');
+  assert.equal(c.autoInstallOnAppQuit,true);                                   // mandatory: installs when Kadr closes
+  u.install(); assert.equal(installs.length,0);                                // not before the download
+  await new Promise(r => setTimeout(r, 20));
+  assert.equal(downloads,1); assert.equal(u.status().phase,'ready');           // downloaded without a click
   assert.equal(installs.length,0); u.install(); assert.deepEqual(installs,[[true,true]]);
   failWith = Error('net::ERR_INTERNET_DISCONNECTED'); assert.equal((await createUpdates(opts).check()).phase,'offline');
   failWith = Error('HttpError: 404 Not Found'); assert.equal((await createUpdates(opts).check()).phase,'error');

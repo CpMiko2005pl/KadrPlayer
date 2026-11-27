@@ -1592,28 +1592,39 @@
     });
   }
   const notice = $('#update-notice');
-  let updateState = { phase: 'idle', message: '' }, laterVersion = '';
+  // updates are mandatory: downloaded right away, installed as soon as nothing is playing (or on click / when Kadr closes)
+  let updateState = { phase: 'idle', message: '' }, installing = false;
+  async function installNow() {
+    if (installing || updateState.phase !== 'ready') return;
+    installing = true;
+    saveResume();
+    await Promise.all([window.kadr.saveState(ST), window.kadr.saveSettings(S)]);
+    await window.kadr.installUpdate();
+  }
+  const updateIdle = () => !cur && !generating;
   function showUpdate(state) {
     updateState = state;
     const about = $('#update-status');
     if (about) about.textContent = state.message;
-    const offered = ['available', 'ready', 'downloading'].includes(state.phase);
-    notice.hidden = !offered || state.version === laterVersion;
-    $('#update-message').textContent = state.message + (state.version ? ' · ' + state.version : '');
-    $('#update-act').hidden = state.phase === 'downloading';
-    $('#update-act').textContent = state.phase === 'ready' ? 'Uruchom ponownie i zainstaluj' : 'Pobierz';
+    notice.hidden = !['available', 'ready', 'downloading'].includes(state.phase);
+    $('#update-message').textContent = state.message + (state.version ? ' · ' + state.version : '')
+      + (state.phase === 'ready' && !updateIdle() ? ' — zainstaluje się po zamknięciu filmu lub programu' : '');
+    $('#update-act').hidden = state.phase !== 'ready';
     refreshMovieView();
+    if (state.phase === 'ready' && updateIdle()) void installNow();
   }
   window.kadr.onUpdate(showUpdate);
-  $('#update-later').onclick = () => { laterVersion = updateState.version; showUpdate(updateState); };
-  $('#update-act').onclick = async () => {
-    if (updateState.phase === 'ready') {
-      saveResume();
-      await Promise.all([window.kadr.saveState(ST), window.kadr.saveSettings(S)]);
-      await window.kadr.installUpdate();
-    } else if (updateState.phase === 'available') await window.kadr.downloadUpdate();
-  };
+  $('#update-act').onclick = () => installNow();
+  // a playing movie is never interrupted: install once it is closed; offline/failed checks are retried
+  setInterval(() => {
+    if (updateState.phase === 'ready' && updateIdle()) void installNow();
+    else if (['error', 'offline'].includes(updateState.phase) && Date.now() - (showUpdate.lastTry || 0) > 30 * 60e3) {
+      showUpdate.lastTry = Date.now();
+      void window.kadr.checkUpdate().then(showUpdate);
+    }
+  }, 5000);
   new ResizeObserver(refreshMovieView).observe(notice);
+  showUpdate.lastTry = Date.now();
   void window.kadr.checkUpdate().then(showUpdate);
 
   // ---------- licence: asked once per computer (first start), kept in state.json ----------
@@ -1685,7 +1696,7 @@
       <div class="info-box">Kadr zawiera FFmpeg (licencja GPL v3, ffmpeg.org) oraz ikony Lucide (ISC). Inter — SIL Open Font License.</div>`;
     body.appendChild(d);
     $('#update-status').textContent = updateState.message;
-    $('#update-check').onclick = async () => { laterVersion = ''; showUpdate(await window.kadr.checkUpdate()); };
+    $('#update-check').onclick = async () => { showUpdate.lastTry = Date.now(); showUpdate(await window.kadr.checkUpdate()); };
     d.querySelectorAll('[data-sp]').forEach(a => { a.onclick = e => { e.preventDefault(); window.kadr.external(SPONSORS[a.dataset.sp]); }; });
     (async () => {
       const ver = await window.kadr.ffmpegVersion().catch(() => '?');
