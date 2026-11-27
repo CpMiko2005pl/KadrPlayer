@@ -845,6 +845,17 @@
     if (known && known !== code) return known;
     try { return code && code !== 'und' ? names.of(code) : 'Inne'; } catch { return code || 'Inne'; }
   }
+  const captionTarget = $('#captions-target');
+  const translationHelp = $('#captions-translation-help');
+  const targets = K.translationLanguages.map(code => ({ code, label: language(code) }));
+  targets.sort((a, b) => Number(b.code === 'pl') - Number(a.code === 'pl') || a.label.localeCompare(b.label, 'pl'));
+  for (const { code, label } of targets) captionTarget.add(new Option(label, code));
+  captionTarget.value = K.translationLanguages.includes(S.captionTarget) ? S.captionTarget : '';
+  translationHelp.hidden = !captionTarget.value;
+  captionTarget.onchange = () => {
+    setSetting('captionTarget', captionTarget.value);
+    translationHelp.hidden = !captionTarget.value;
+  };
   function captionAppearance() {
     const preview = $('#captions-preview span');
     preview.style.fontSize = S.subSize * 3.5 + 'px';
@@ -990,7 +1001,8 @@
     if (remote) await importRemoteFile(file);
     else { addExternalSub(file, true); closeCaptions(); }
   };
-  const captionPhases = { model: 'Pobieranie modelu', audio: 'Przygotowywanie dźwięku', capture: 'Nagrywanie fragmentu', recognize: 'Rozpoznawanie mowy' };
+  const captionPhases = { model: 'Pobieranie modelu Whisper', audio: 'Przygotowywanie dźwięku', capture: 'Nagrywanie fragmentu',
+    recognize: 'Rozpoznawanie mowy', 'translation-model': 'Pobieranie modelu tłumaczenia', translate: 'Tłumaczenie napisów' };
   function showCaptionProgress(phase, percent) {
     captionProgress.hidden = false;
     captionProgress.value = percent;
@@ -1021,13 +1033,18 @@
     captionBusy(true);
     showCaptionProgress('audio', 0);
     try {
-      const { cues, warning } = await window.kadr.generateCaptions({ id: remote?.id, file: c.item.path, stream: engine.sel.audio?.index, start, length, engine: method, key: method === 'groq' ? key : undefined });
+      const { cues, warning, language: translatedLanguage } = await window.kadr.generateCaptions({
+        id: remote?.id, file: c.item.path, stream: engine.sel.audio?.index, start, length, target: captionTarget.value,
+        engine: method, key: method === 'groq' ? key : undefined,
+      });
       if (cur !== c || session !== captionSession || !captionDialog.open) return;
       if (!cues.length) { captionStatus.textContent = 'W tym fragmencie nie rozpoznano mowy.'; return; }
-      const label = 'Whisper · ' + fmt(start) + ' – ' + fmt(warning ? cues[cues.length - 1].end : start + length);
-      if (remote) await window.kadr.movieAction(remote.id, 'caption-add', { label, cues });
+      const label = 'Whisper · ' + (translatedLanguage ? language(translatedLanguage) + ' · ' : '') +
+        fmt(start) + ' – ' + fmt(warning ? cues[cues.length - 1].end : start + length);
+      const track = { label, cues, lang: translatedLanguage || '' };
+      if (remote) await window.kadr.movieAction(remote.id, 'caption-add', track);
       else {
-        c.subTracks.push({ kind: 'generated', label, cues });
+        c.subTracks.push({ kind: 'generated', ...track });
         await selectSub(c.subTracks.length - 1);
       }
       c.generated = cues;

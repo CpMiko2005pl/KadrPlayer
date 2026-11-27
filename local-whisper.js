@@ -56,16 +56,31 @@ function segmentsFromSrt(text) {
   return segments;
 }
 
-async function recognize(ffmpeg, directory, audio, signal, progress = () => {}) {
+function attachDetectedLanguages(segments, log) {
+  const detections = [];
+  let start = 0;
+  const diagnostic = /^(?:\[Parsed_whisper_[^\]]+\] )?(?:run transcription at (-?\d+) ms|(?:whisper_[a-z_]+: )?auto-detected language: ([a-z]{2,3})\b)/gim;
+  for (const match of log.matchAll(diagnostic)) {
+    if (match[1] !== undefined) start = Number(match[1]) / 1000;
+    else detections.push({ start, lang: match[2].toLowerCase() });
+  }
+  let i = 0;
+  return segments.map(cue => {
+    while (detections[i + 1]?.start <= cue.start) i++;
+    return { ...cue, lang: detections[i]?.lang };
+  });
+}
+
+async function recognize(ffmpeg, directory, audio, signal, progress = () => {}, detectLanguage = false) {
   const job = randomUUID();
   const input = path.join(directory, job + '.audio');
   const output = job + '.srt';
   try {
     await fs.writeFile(input, audio, { signal, flag: 'wx' });
-    const result = run(ffmpeg, ['-nostdin', '-v', 'error', '-nostats', '-progress', 'pipe:1', '-i', input, '-vn', '-af',
+    const result = run(ffmpeg, ['-nostdin', '-v', detectLanguage ? 'debug' : 'error', '-nostats', '-progress', 'pipe:1', '-i', input, '-vn', '-af',
       'asetpts=PTS-STARTPTS,whisper=model=' + model + ':language=auto:use_gpu=0:queue=12:format=srt:destination=' + output,
       '-f', 'null', '-'], {
-      cwd: directory, windowsHide: true, signal,
+      cwd: directory, windowsHide: true, signal, maxBuffer: 8 * 1024 * 1024,
       // whisper.cpp in ffmpeg probes Vulkan devices even with use_gpu=0, and that probe crashes (0xC0000005)
       // on some drivers, e.g. Intel HD 520; recognition runs on the CPU anyway
       env: { ...process.env, GGML_DISABLE_VULKAN: '1' },
@@ -75,8 +90,10 @@ async function recognize(ffmpeg, directory, audio, signal, progress = () => {}) 
       const match = /^out_time_us=(\d+)$/.exec(line);
       if (match) progress(Number(match[1]) / 1e6);
     });
-    try { await result; } finally { lines.close(); }
-    return segmentsFromSrt(await fs.readFile(path.join(directory, output), 'utf8'));
+    let diagnostics;
+    try { diagnostics = await result; } finally { lines.close(); }
+    const segments = segmentsFromSrt(await fs.readFile(path.join(directory, output), 'utf8'));
+    return detectLanguage ? attachDetectedLanguages(segments, diagnostics.stderr) : segments;
   } catch (error) {
     if (signal.aborted) throw Error('Anulowano generowanie napisów.');
     throw Error('Błąd lokalnego rozpoznawania mowy. ' + (error.stderr || error.message).slice(-180));
@@ -85,4 +102,4 @@ async function recognize(ffmpeg, directory, audio, signal, progress = () => {}) 
   }
 }
 
-module.exports = { modelReady, prepare, recognize, segmentsFromSrt };
+module.exports = { modelReady, prepare, recognize, segmentsFromSrt, attachDetectedLanguages };

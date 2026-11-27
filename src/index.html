@@ -148,6 +148,8 @@
     <details id="captions-ai">
       <summary>Generowanie napisów</summary>
       <label>Rozpoznawanie mowy<select id="captions-engine"><option value="local">Lokalnie · Whisper</option><option value="groq">W chmurze · Groq</option></select></label>
+      <label>Język napisów <select id="captions-target" aria-describedby="captions-translation-help"><option value="">Oryginalny język nagrania</option></select></label>
+      <p id="captions-translation-help" hidden>Tłumaczenie działa lokalnie. Model (około 640 MB) jest pobierany przy pierwszym tłumaczeniu.</p>
       <div id="captions-cloud" hidden><label>Klucz API Groq <input id="captions-key" type="password" autocomplete="off" spellcheck="false"></label>
       <button id="captions-get-key" class="btn ghost">Strona kluczy Groq ↗</button></div>
       <label>Zakres <select id="captions-range"><option value="60">Minuta od bieżącej pozycji</option><option value="300">5 minut od bieżącej pozycji</option><option value="all">Cały film</option></select></label>
@@ -202,6 +204,7 @@
 </div>
 <script src="js/icons.js"></script>
 <script src="js/subs.js"></script>
+<script src="js/translation-languages.js"></script>
 <script src="js/audio.js"></script>
 <script src="js/gl.js"></script>
 <script src="js/engine.js"></script>

@@ -313,10 +313,10 @@ async function transcribe(audio, filename, key, signal) {
   if (response.status === 401 || response.status === 403) throw Error('Groq odrzucił klucz API.');
   if (response.status === 429) throw Error('Wyczerpano limit Groq. Spróbuj później.');
   if (!response.ok) throw Error('Usługa Groq zwróciła błąd HTTP ' + response.status + '.');
-  const { segments } = await response.json();
+  const { segments, language } = await response.json();
   if (!Array.isArray(segments)) throw Error('Groq nie zwrócił znaczników czasu.');
   return segments.filter(s => Number.isFinite(s.start) && Number.isFinite(s.end) && typeof s.text === 'string' && s.text.trim() && !(s.no_speech_prob >= 0.9))
-    .map(s => ({ start: s.start, end: s.end, text: s.text.trim().replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;') }));
+    .map(s => ({ start: s.start, end: s.end, lang: s.language || language, text: s.text.trim().replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;') }));
 }
 
 module.exports = { movieCaptions, captureMovieAudio, localAudio, transcribe };

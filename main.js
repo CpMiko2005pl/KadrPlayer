@@ -217,6 +217,8 @@ handle('catalog:series', url => catalog.fetchSeries(url));
 handle('catalog:play', (url, id, bounds, volume) => catalog.openMovie(win, url, id, bounds, volume));
 const captions = require('./captions');
 const whisper = require('./local-whisper');
+const { translateCues } = require('./subtitle-translation');
+const translationLanguages = require('./src/js/translation-languages');
 const modelDirectory = path.join(userDir, 'models');
 handle('captions:model-ready', () => whisper.modelReady(modelDirectory));
 let captionJob;
@@ -229,9 +231,10 @@ function stopCaptionJob() {
 }
 app.on('before-quit', stopCaptionJob);
 handle('captions:cancel', stopCaptionJob);
-handle('captions:generate', async ({ id, file, stream, start, length, key, engine = 'local' }) => {
+handle('captions:generate', async ({ id, file, stream, start, length, key, target = '', engine = 'local' }) => {
   if (captionJob) throw Error('Generowanie jest już uruchomione.');
   if (engine === 'groq' && (typeof key !== 'string' || !/^[A-Za-z0-9_-]{12,250}$/.test(key))) throw Error('Wprowadź prawidłowy klucz API Groq.');
+  if (target !== '' && !translationLanguages.includes(target)) throw Error('Wybierz obsługiwany język napisów.');
   if (!Number.isFinite(start) || start < 0 || !Number.isFinite(length) || length <= 0 || length > 7 * 86400) throw Error('Nieprawidłowy zakres nagrania.');
   if (id == null && (!path.isAbsolute(file) || !fs.statSync(file).isFile())) throw Error('Wybierz lokalny plik multimedialny.');
   const job = captionJob = { id, abort: new AbortController() };
@@ -285,15 +288,24 @@ handle('captions:generate', async ({ id, file, stream, start, length, key, engin
       signal.throwIfAborted();
       report('recognize', position);
       const segments = engine !== 'groq' ? await whisper.recognize(media.ffmpeg, modelDirectory, audio, signal,
-        seconds => report('recognize', Math.min(end, Math.max(position, offset + seconds))))
+        seconds => report('recognize', Math.min(end, Math.max(position, offset + seconds))), !!target)
         : await captions.transcribe(audio, id == null ? 'audio.mp3' : 'audio.webm', key, signal);
       for (const s of segments) {
         const from = Math.max(offset, offset + s.start), to = Math.min(end, offset + s.end);
-        if (to > from) cues.push({ start: from, end: to, text: s.text });
+        if (to > from) cues.push({ start: from, end: to, text: s.text, lang: s.lang });
       }
       position = end;
     }
     report('recognize', start + length, true);
+    if (target && cues.length) {
+      try {
+        return { cues: await translateCues(path.join(modelDirectory, 'translation'), cues, target, signal, send), language: target };
+      } catch (error) {
+        signal.throwIfAborted();
+        log('subtitle translation error', error.message);
+        return { cues, warning: 'Nie udało się przetłumaczyć napisów. Włączono oryginalną transkrypcję. ' + error.message };
+      }
+    }
     return { cues };
   } catch (error) {
     if (cues.length && !signal.aborted) return { cues, warning: 'Zachowano gotową część napisów. ' + error.message };

@@ -17,7 +17,7 @@ window.K = window.K || {};
     normalize: false, dialog: false, mono: false, audioDelay: 0, stereo: false, preservesPitch: true, audioLang: 'pol,eng', sink: 'default',
     // subtitles
     subsAuto: true, subLang: 'pol,eng', subSize: 5.2, subColor: '#ffffff', subOutline: 2.2, subBg: 0, subPos: 6, subFont: 'Segoe UI',
-    subBold: true, subMargins: false, burnAss: false,
+    subBold: true, subMargins: false, burnAss: false, captionTarget: '',
     repeat: 'off', shuffle: false,
   };
 

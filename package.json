@@ -1,7 +1,7 @@
 {
   "name": "kadr-player",
   "productName": "Kadr",
-  "version": "1.4.3",
+  "version": "1.4.4",
   "description": "Odtwarzacz wideo na Windows: każdy format (ffmpeg), skalowanie wysokiej jakości (Lanczos, FSR), płynny ruch, korektor dźwięku i napisy",
   "main": "main.js",
   "author": "BiNoX",
@@ -34,11 +34,15 @@
       "movie-input.js",
       "captions.js",
       "local-whisper.js",
+      "subtitle-translation.js",
       "package.json",
       "src/**/*",
       "build/icon.ico",
       "build/icon.png",
       "updates.js"
+    ],
+    "asarUnpack": [
+      "**/onnxruntime-node/bin/**"
     ],
     "extraResources": [
       {
@@ -170,6 +174,7 @@
     "rcedit": "^4.0.1"
   },
   "dependencies": {
+    "@huggingface/transformers": "3.8.1",
     "electron-updater": "6.8.9"
   }
 }

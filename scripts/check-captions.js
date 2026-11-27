@@ -1,6 +1,7 @@
 const assert = require('node:assert/strict');
 const { movieCaptions } = require('../captions');
-const { segmentsFromSrt } = require('../local-whisper');
+const { segmentsFromSrt, attachDetectedLanguages } = require('../local-whisper');
+const { translateCues, languageCode } = require('../subtitle-translation');
 global.window = global;
 global.K = {};
 require('../src/js/subs');
@@ -14,6 +15,13 @@ async function test() {
   assert.deepEqual(K.parseSubtitles(ass).map(c => ({ ...c, top: !!c.top })), expected);
   const segments = segmentsFromSrt(srt);
   assert.deepEqual(segments, [{ start: 1, end: 3.5, text: 'Próba' }]);
+  const second = { start: 13, end: 14, text: 'Test' };
+  assert.deepEqual(attachDetectedLanguages([...segments, second], 'run transcription at 0 ms\nauto-detected language: pl\n' +
+    'run transcription at 12000 ms\nauto-detected language: en'), [{ ...segments[0], lang: 'pl' }, { ...second, lang: 'en' }]);
+  assert.equal(languageCode('Polish'), 'pl');
+  assert.equal(languageCode('en-US'), 'en');
+  const unchanged = [{ ...segments[0], lang: 'pl' }];
+  assert.deepEqual(await translateCues('', unchanged, 'pl', new AbortController().signal), unchanged);
   assert.deepEqual(K.parseSubtitles(K.exportSrt(segments, 0.5)), [{ ...expected[0], start: 1.5, end: 4 }]);
   let video = { currentTime: 23.5, textTracks: [], addEventListener() {},
     addTextTrack(kind, label, language) {
