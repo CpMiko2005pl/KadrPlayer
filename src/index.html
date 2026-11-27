@@ -133,6 +133,7 @@
     <header><h2 id="captions-title">Napisy Kadr</h2><button id="captions-close" class="cb" aria-label="Wróć do filmu">×</button></header>
     <fieldset id="captions-form" aria-label="Ustawienia napisów">
     <p id="captions-active" role="status"></p>
+    <label class="caption-check"><input id="captions-auto" type="checkbox"> Automatycznie włącz znalezione napisy</label>
     <div class="caption-grid">
       <label>Język<select id="captions-lang"></select></label>
       <label>Wersja<select id="captions-version"></select></label>
@@ -154,7 +155,7 @@
     <p id="captions-help"></p>
     <button id="captions-generate" class="btn primary">Wygeneruj napisy</button>
     <button id="captions-save" class="btn" hidden>Zapisz SRT…</button>
-    <progress id="captions-progress" aria-label="Pobieranie modelu" hidden></progress>
+    <progress id="captions-progress" max="100" aria-label="Postęp generowania napisów" hidden></progress>
     </fieldset>
     <p id="captions-status" role="status"></p>
   </dialog>

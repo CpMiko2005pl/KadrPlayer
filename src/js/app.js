@@ -47,7 +47,7 @@
     return S.encoder !== 'auto' && list.includes(S.encoder) ? S.encoder : list[0];
   };
   if (!encList) window.kadr.encoders().then(list => { encList = list; S._enc = { ffmpeg: cfg.ffmpeg, list }; saveSettings(); }).catch(() => { encList = ['libx264']; });
-  const engine = new K.Engine(video, { base: cfg.base, token: cfg.token, settings: () => S, encoder: pickEncoder });
+  const engine = new K.Engine(video, { base: cfg.base, token: cfg.token, settings: () => S, encoder: pickEncoder, avoidHEVCMain10: cfg.avoidHEVCMain10 });
   const openCatalog = K.createMovieCatalog((movie, episodes = [movie], index = 0) => {
     playlist = episodes.map(entry => ({ path: entry.url, title: entry.title, catalog: true }));
     playIndex(index);
@@ -55,13 +55,13 @@
   const sound = new K.AudioChain(video);
   const subsView = new K.SubtitleView($('#subs'));
   let gl = null;
-  const useGL = () => S.renderer === 'gl' && gl && gl.ok;
+  const useGL = () => S.renderer === 'gl' && gl && gl.ok && !engine.playsHDR();
 
   function setupRenderer() {
-    if (S.renderer === 'gl' && !gl) {
+    if (S.renderer === 'gl' && !gl && !engine.playsHDR()) {
       gl = new K.GLRenderer(canvas);
       gl.onLost = () => { osd('Utracono kontekst grafiki', 'przełączam na renderer natywny'); app.classList.add('native'); dirty = true; };
-      gl.onRestored = () => { if (S.renderer === 'gl') app.classList.remove('native'); dirty = true; };
+      gl.onRestored = () => { app.classList.toggle('native', !useGL()); dirty = true; };
       if (!gl.ok) osd('WebGL2 niedostępny', 'używam renderera natywnego');
     }
     app.classList.toggle('native', !useGL());
@@ -153,6 +153,7 @@
       if (!await window.kadr.playMovie(item.path, current.id, movieBounds(), S.muted ? 0 : S.volume)) return;
       if (current !== remote) return;
       current.ready = true;
+      void window.kadr.movieAction(current.id, 'caption-auto', S.subsAuto).catch(() => {});
       void applyMovieQuality(current, undefined, 6).catch(() => {});
       captionAppearance();
       refreshMovieView();
@@ -260,7 +261,8 @@
     const dx = (crop.x + crop.w / 2 - 0.5) * vw, dy = (crop.y + crop.h / 2 - 0.5) * vh;
     video.style.width = vw + 'px'; video.style.height = vh + 'px';
     video.style.left = (r.x + r.w / 2 - vw / 2) + 'px'; video.style.top = (r.y + r.h / 2 - vh / 2) + 'px';
-    video.style.transform = `rotate(${S.rotate}deg) scale(${S.flipH ? -1 : 1}, ${S.flipV ? -1 : 1}) translate(${-dx}px, ${-dy}px)`;
+    video.style.transform = S.rotate || S.flipH || S.flipV || dx || dy
+      ? `rotate(${S.rotate}deg) scale(${S.flipH ? -1 : 1}, ${S.flipV ? -1 : 1}) translate(${-dx}px, ${-dy}px)` : '';
     video.style.clipPath = (crop.w < 1 || crop.h < 1) ? `inset(${crop.y * 100}% ${(1 - crop.x - crop.w) * 100}% ${(1 - crop.y - crop.h) * 100}% ${crop.x * 100}%)` : '';
     const f = [];
     if (S.bright) f.push(`brightness(${1 + S.bright})`);
@@ -809,6 +811,8 @@
   }
   const captionDialog = $('#captions-dialog');
   const captionStatus = $('#captions-status');
+  const captionProgress = $('#captions-progress');
+  const captionAuto = $('#captions-auto');
   let generating = false;
   let captionSession = 0;
   function closeCaptions() {
@@ -864,6 +868,12 @@
       : ready ? 'Model Whisper jest na tym komputerze.' : 'Pierwsze użycie pobierze model Whisper (148 MB). Dźwięk zostanie na komputerze.';
   }
   $('#captions-engine').onchange = generationHelp;
+  captionAuto.onchange = async () => {
+    try {
+      await setSetting('subsAuto', captionAuto.checked);
+      if (captionDialog.open) await openCaptions();
+    } catch (e) { captionStatus.textContent = captionError(e); }
+  };
   async function openCaptions(expanded = false) {
     if (!cur || (remote && !remote.ready)) return;
     const c = cur, movie = remote;
@@ -883,6 +893,7 @@
       } else if (!video.paused) { video.pause(); playback.resume = true; }
     }
     captionStatus.textContent = '';
+    captionAuto.checked = S.subsAuto;
     $('#captions-size').value = S.subSize;
     $('#captions-bg').value = S.subBg;
     $('#captions-delay').value = c.subDelay || 0;
@@ -926,7 +937,7 @@
             if (!choices.some(t => t.source === key)) choices.push({ ...r, lang: source.code, source: key });
           }
         }
-        versions.replaceChildren(new Option(choices.length ? 'Wybierz wersję…' : 'Brak wersji w tym języku', ''));
+        versions.replaceChildren(new Option(choices.length ? (active ? 'Wybierz wersję…' : 'Napisy wyłączone') : 'Brak wersji w tym języku', ''));
         choices.forEach((t, i) => versions.add(new Option((i + 1) + '. ' + t.label + (t.active ? ' ✓' : ''), String(i), false, !!t.active)));
         versions.disabled = !choices.length;
         versions.onchange = async () => {
@@ -979,17 +990,15 @@
     if (remote) await importRemoteFile(file);
     else { addExternalSub(file, true); closeCaptions(); }
   };
-  window.kadr.onCaptionProgress(({ position, seconds, start, length, received, total }) => {
+  const captionPhases = { model: 'Pobieranie modelu', audio: 'Przygotowywanie dźwięku', capture: 'Nagrywanie fragmentu', recognize: 'Rozpoznawanie mowy' };
+  function showCaptionProgress(phase, percent) {
+    captionProgress.hidden = false;
+    captionProgress.value = percent;
+    captionStatus.textContent = `${captionPhases[phase]} · ${percent}%`;
+  }
+  window.kadr.onCaptionProgress(({ phase, percent }) => {
     if (!generating || !captionDialog.open) return;
-    const progress = $('#captions-progress');
-    progress.hidden = !total;
-    if (total) {
-      progress.max = total;
-      progress.value = received;
-      captionStatus.textContent = 'Pobieranie modelu · ' + Math.floor(received * 100 / total) + '%';
-      return;
-    }
-    captionStatus.textContent = 'Generowanie napisów od ' + fmt(position) + ' do ' + fmt(position + seconds) + ' · koniec zakresu ' + fmt(start + length);
+    showCaptionProgress(phase, percent);
   });
   function captionBusy(busy) {
     generating = busy;
@@ -1010,6 +1019,7 @@
     const resumeLocal = !remote && !video.paused;
     if (resumeLocal) video.pause();
     captionBusy(true);
+    showCaptionProgress('audio', 0);
     try {
       const { cues, warning } = await window.kadr.generateCaptions({ id: remote?.id, file: c.item.path, stream: engine.sel.audio?.index, start, length, engine: method, key: method === 'groq' ? key : undefined });
       if (cur !== c || session !== captionSession || !captionDialog.open) return;
@@ -1027,7 +1037,7 @@
       if (cur === c && session === captionSession) captionStatus.textContent = captionError(e);
     } finally {
       captionBusy(false);
-      $('#captions-progress').hidden = true;
+      captionProgress.hidden = true;
       if (resumeLocal && cur === c) video.play().catch(() => {});
     }
   };
@@ -1124,10 +1134,15 @@
         const n = baseName(f);
         const stem = n.replace(/\.[^.]+$/, '');
         const tag = stem.toLowerCase().startsWith(vbase) ? stem.slice(vbase.length).replace(/^[._\- ]+/, '') : stem;
-        c.subTracks.push({ kind: 'file', path: f, label: `Plik: ${tag ? tag + ' · ' : ''}${ext(f).toUpperCase()}`, lang: guessLang(tag || n) });
+        if (!c.subTracks.some(t => t.path === f)) {
+          c.subTracks.push({ kind: 'file', path: f, label: `Plik: ${tag ? tag + ' · ' : ''}${ext(f).toUpperCase()}`, lang: guessLang(tag || n) });
+        }
       }
     }
-    if (!S.subsAuto || !c.subTracks.length) return;
+    if (S.subsAuto) return selectAutomaticSub(c);
+  }
+  function selectAutomaticSub(c) {
+    if (c !== cur || c.subManual || c.subSel >= 0 || !c.subTracks.length) return;
     const prefs = String(S.subLang || '').toLowerCase().split(/[\s,;]+/).filter(Boolean);
     const aLang = ((engine.sel.audio && engine.sel.audio.tags && engine.sel.audio.tags.language) || '').toLowerCase();
     const audioIsPreferred = prefs.length && aLang && (aLang === prefs[0] || K.langName(aLang) === K.langName(prefs[0]));
@@ -1145,7 +1160,7 @@
       if (t.stream && t.stream.bitmap && score > 0) score -= 30;
       if (score > bestScore) { bestScore = score; best = i; }
     });
-    if (best >= 0 && bestScore > 0) selectSub(best, true);
+    if (best >= 0 && bestScore > 0) return selectSub(best, true);
   }
   function guessLang(s) {
     const l = s.toLowerCase();
@@ -1156,6 +1171,7 @@
   async function selectSub(i, auto) {
     if (!cur) return;
     const c = cur;
+    if (!auto) c.subManual = true;
     const prevBurn = !!engine.sel.burn;
     c.subSel = i;
     c.cues = null;
@@ -1437,6 +1453,8 @@
     applySound();            // smooth motion delays the sound by one frame of this file
   });
   engine.on('mode', (mode, reasons) => {
+    setupRenderer();
+    applySound();
     const b = $('#mode-badge');
     b.textContent = { direct: 'BEZPOŚREDNIO', copy: 'REMUX BEZ STRAT', encode: 'KONWERSJA · ' + pickEncoder().replace('h264_', '').replace('lib', '').toUpperCase() }[mode] || '';
     b.classList.toggle('on', !!mode);
@@ -1533,11 +1551,20 @@
     if (key === 'burnAss' && cur && cur.subSel >= 0) selectSub(cur.subSel, true);
     if (key === 'thumbs') clearThumbs();
     dirty = true;
+    if (key === 'subsAuto') {
+      if (remote?.ready) return window.kadr.movieAction(remote.id, 'caption-auto', val);
+      if (!cur || remote) return;
+      if (!val && !cur.subManual && cur.subSel >= 0) return selectSub(-1, true);
+      if (val && cur.subSel < 0) {
+        cur.subManual = false;
+        return selectAutomaticSub(cur);
+      }
+    }
   }
   function applySound() {
     const fps = K.streamFps(engine.sel && engine.sel.video) || 24;
     sound.set({ eqOn: S.eqOn, eq: S.eq, preamp: S.preamp, normalize: S.normalize, dialog: S.dialog, mono: S.mono, delayMs: S.audioDelay,
-      extraDelay: effSmooth() && S.renderer === 'gl' && cur && cur.info && cur.info.video.length ? 1 / fps : 0 });
+      extraDelay: effSmooth() && useGL() && cur && cur.info && cur.info.video.length ? 1 / fps : 0 });
   }
 
   let sinkList = [];
@@ -1951,7 +1978,7 @@
   window.kadr.onGpuCrash(() => {
     const v = engine.sel && engine.sel.video;
     if (!cur || !v || !['direct', 'copy'].includes(engine.mode)) return;
-    const key = v.codec_name + (/p10|p12/.test(v.pix_fmt || '') ? '10' : '');
+    const key = K.decoderKey(v);
     S.badCodecs = Array.from(new Set([...(S.badCodecs || []), key]));
     saveSettings();
     osd('Karta graficzna nie radzi sobie z ' + key.toUpperCase(), 'przełączam na konwersję w locie (zapamiętane)', 3500);

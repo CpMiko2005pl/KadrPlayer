@@ -9,6 +9,7 @@ window.K = window.K || {};
 (() => {
   const BITMAP_SUBS = ['hdmv_pgs_subtitle', 'dvd_subtitle', 'dvb_subtitle', 'xsub', 'pgssub', 'dvdsub'];
   const COPY_VIDEO = ['h264', 'hevc', 'vp9', 'av1'];
+  const isHighBitDepth = stream => /(?:p1[02]|p010)/.test(stream.pix_fmt || '');
   const sleep = ms => new Promise(r => setTimeout(r, ms));
   const rate = s => { if (!s || s === '0/0') return 0; const [a, b] = String(s).split('/').map(Number); return b ? a / b : a; };
 
@@ -66,6 +67,7 @@ window.K = window.K || {};
 
   K.streamFps = s => (s ? rate(s.avg_frame_rate) || rate(s.r_frame_rate) : 0);
   K.isHDR = s => !!s && ['smpte2084', 'arib-std-b67'].includes(s.color_transfer);
+  K.decoderKey = s => s.codec_name + (isHighBitDepth(s) ? '10' : '');
   K.isInterlaced = s => !!s && ['tt', 'bb', 'tb', 'bt'].includes(s.field_order);
   K.langName = code => ({ pol: 'polski', pl: 'polski', eng: 'angielski', en: 'angielski', ger: 'niemiecki', deu: 'niemiecki', fre: 'francuski', fra: 'francuski', spa: 'hiszpański', ita: 'włoski', rus: 'rosyjski', ukr: 'ukraiński', jpn: 'japoński', kor: 'koreański', chi: 'chiński', zho: 'chiński', cze: 'czeski', ces: 'czeski', slo: 'słowacki', por: 'portugalski', dut: 'niderlandzki', nld: 'niderlandzki', swe: 'szwedzki', nor: 'norweski', dan: 'duński', fin: 'fiński', hun: 'węgierski', tur: 'turecki', ara: 'arabski', heb: 'hebrajski', hin: 'hindi', und: '' }[String(code || '').toLowerCase()] ?? String(code || ''));
 
@@ -75,6 +77,8 @@ window.K = window.K || {};
       this.video = video;
       this.cfg = cfg;              // { base, token, settings: () => settings, encoder: () => name }
       this.sup = detectSupport();
+      // The Windows Chromium decoder can crash the GPU process on this Skylake adapter.
+      if (cfg.avoidHEVCMain10) this.sup.hevc10 = false;
       this.gen = 0;
       this.sgen = 0;
       this.info = null;
@@ -89,6 +93,9 @@ window.K = window.K || {};
       this.gapTimer = setInterval(() => { if (this.mode && this.mode !== 'direct' && !video.paused) this.jumpGap(); }, 400);
     }
     S() { return this.cfg.settings(); }
+    playsHDR() {
+      return !!this.mode && K.isHDR(this.sel.video) && (this.mode !== 'encode' || this.S().tonemap === false);
+    }
     url(path, q) {
       const p = new URLSearchParams(Object.assign({ k: this.cfg.token }, q));
       return `${this.cfg.base}${path}?${p}`;
@@ -98,11 +105,11 @@ window.K = window.K || {};
     videoOK(v) {
       if (!v) return true;
       const pf = v.pix_fmt || '';
-      const b10 = /p10|p12/.test(pf);
+      const b10 = isHighBitDepth(v);
       const s420 = /^(yuv420p|yuvj420p|yuv420p10le|nv12|p010le)$/.test(pf) || !pf;
       if (!s420) return false;
       // codecs that crashed the GPU process on this PC are remembered and converted instead
-      if ((this.S().badCodecs || []).includes(v.codec_name + (b10 ? '10' : ''))) return false;
+      if ((this.S().badCodecs || []).includes(K.decoderKey(v))) return false;
       switch (v.codec_name) {
         case 'h264': return !b10 && this.sup.h264;
         case 'hevc': return b10 ? this.sup.hevc10 : this.sup.hevc;
@@ -307,7 +314,7 @@ window.K = window.K || {};
       if (this.sel.video) {
         if (this.mode === 'encode') codecs.push('avc1.640033');
         else {
-          const b10 = /p10/.test(v.pix_fmt || '');
+          const b10 = isHighBitDepth(v);
           codecs.push({ h264: 'avc1.640033', hevc: b10 ? 'hvc1.2.4.L153.B0' : 'hvc1.1.6.L153.B0', vp9: b10 ? 'vp09.02.51.10' : 'vp09.00.51.08', av1: b10 ? 'av01.0.15M.10' : 'av01.0.15M.08' }[v.codec_name]);
         }
       }

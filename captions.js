@@ -5,7 +5,8 @@ async function movieCaptions(action, value) {
   const video = document.querySelector('video[data-kadr-film]');
   if (!video) return null;
   const state = video.kadrCaptions ||= { size: 5.2, bg: 0, delay: 0, times: new WeakMap(), generation: 0 };
-  const tracks = Array.from(video.textTracks).filter(t => ['captions', 'subtitles'].includes(t.kind));
+  const captionTracks = () => Array.from(video.textTracks).filter(t => ['captions', 'subtitles'].includes(t.kind));
+  const tracks = captionTracks();
   const cc = document.querySelector('#ccBtn');
   const layer = document.querySelector('.jw-subs');
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -28,22 +29,89 @@ async function movieCaptions(action, value) {
       cue.endTime = Math.max(0, times[1] + state.delay);
     }
   }
+  function selectTrack(selected, available) {
+    state.selected?.removeEventListener('cuechange', state.render);
+    state.selected = selected;
+    for (const track of available) {
+      const mode = track === selected ? 'hidden' : 'disabled';
+      if (track.mode !== mode) track.mode = mode;
+    }
+    if (selected) {
+      styleTrack(selected);
+      selected.addEventListener('cuechange', state.render);
+    }
+    state.render();
+  }
   if (action === 'init') {
-    const css = document.createElement('style');
-    css.id = 'kadr-caption-style';
-    document.head.append(css);
-    video.addEventListener('load', event => { if (event.target.track?.mode === 'showing') styleTrack(event.target.track); }, true);
-    css.textContent = '.jw-menu:has(.jw-select),.jw-menu:has(.jw-tabs){display:none!important}';
+    if (state.overlay) return true;
+    const css = new CSSStyleSheet();
+    css.replaceSync(`
+      .jw-menu:has(.jw-select),.jw-menu:has(.jw-tabs){display:none!important}
+      #kadr-caption-overlay{all:initial;position:fixed;inset:0;z-index:2147483647;pointer-events:none}
+      #kadr-caption-overlay>div{position:absolute;left:5%;right:5%;text-align:center;
+        font:650 var(--kadr-caption-size,5.2vh)/1.2 "Segoe UI",sans-serif;
+        color:white;text-shadow:0 1px 3px black,1px 0 2px black;white-space:pre-line;overflow-wrap:anywhere}
+      #kadr-caption-overlay>div:first-child{top:5%}
+      #kadr-caption-overlay>div:last-child{bottom:5%}
+      #kadr-caption-overlay .kadr-cue{background:var(--kadr-caption-bg,transparent);padding:0 .16em;box-decoration-break:clone}
+    `);
+    document.adoptedStyleSheets = [...document.adoptedStyleSheets, css];
+    const overlay = document.createElement('div');
+    overlay.id = 'kadr-caption-overlay';
+    const top = document.createElement('div'), bottom = document.createElement('div');
+    overlay.append(top, bottom);
+    document.documentElement.append(overlay);
+    state.overlay = overlay;
+    let visible = [];
+    state.render = () => {
+      const cues = Array.from(state.selected?.activeCues || []);
+      if (cues.length === visible.length && cues.every((cue, i) => cue === visible[i])) return;
+      visible = cues;
+      top.replaceChildren();
+      bottom.replaceChildren();
+      for (const cue of cues) {
+        const line = document.createElement('div'), text = document.createElement('span');
+        text.className = 'kadr-cue';
+        // VTTCue builds a fragment using the WebVTT markup rules.
+        text.append(cue.getCueAsHTML ? cue.getCueAsHTML() : cue.text);
+        line.append(text);
+        (cue.kadrTop || (typeof cue.line === 'number' && cue.line >= 0 && (!cue.snapToLines || cue.line <= 2) && cue.line < 50) ? top : bottom).append(line);
+      }
+    };
+    for (const event of ['timeupdate', 'seeked', 'emptied']) video.addEventListener(event, state.render);
+    video.addEventListener('load', event => {
+      const track = event.target.track;
+      if (track && track === state.selected) styleTrack(track);
+    }, true);
+    state.syncAutomatic = () => {
+      if (state.applying || (state.auto === undefined && !state.manual)) return;
+      const available = captionTracks();
+      const showing = available.find(track => track.mode === 'showing');
+      if (state.manual) {
+        if (showing) selectTrack(state.selected, available);
+        return;
+      }
+      if (showing) state.automatic = showing;
+      const selected = state.auto && available.includes(state.automatic) ? state.automatic : undefined;
+      if (showing || selected !== state.selected) selectTrack(selected, available);
+    };
+    video.textTracks.addEventListener?.('change', state.syncAutomatic);
+    return true;
+  }
+  if (action === 'auto') {
+    if (value && state.auto === false && !state.selected) state.manual = false;
+    state.auto = !!value;
+    state.syncAutomatic();
     return true;
   }
   if (action === 'style') {
     state.size = Math.max(2.5, Math.min(10, +value.size));
     state.bg = Math.max(0, Math.min(1, +value.bg));
     state.delay = Number(value.delay) || 0;
-    document.getElementById('kadr-caption-style').textContent =
-      '.jw-menu:has(.jw-select),.jw-menu:has(.jw-tabs){display:none!important}' +
-      'video::cue{font-size:' + state.size + 'vh;background-color:rgba(0,0,0,' + state.bg + ');color:white;text-shadow:0 1px 3px black,1px 0 2px black}';
-    for (const track of tracks) if (track.mode === 'showing') styleTrack(track);
+    state.overlay.style.setProperty('--kadr-caption-size', state.size + 'vh');
+    state.overlay.style.setProperty('--kadr-caption-bg', 'rgba(0,0,0,' + state.bg + ')');
+    if (state.selected) styleTrack(state.selected);
+    state.render();
     return true;
   }
   if (action === 'list') {
@@ -51,7 +119,7 @@ async function movieCaptions(action, value) {
     const langs = Array.from(menu?.querySelector('.jw-select')?.options || [])
       .filter(o => o.value && !o.disabled).map(o => ({ code: o.value, label: o.label }));
     return { langs, tracks: tracks.map((t, index) => ({ index, label: t.label || 'Ścieżka ' + (index + 1),
-      lang: t.language, active: t.mode === 'showing', source: t.kadrSource || null })) };
+      lang: t.language, active: t === state.selected || (!state.selected && t.mode === 'showing'), source: t.kadrSource || null })) };
   }
   const rows = menu => Array.from(menu?.querySelectorAll('.jw-result') || []);
   if (action === 'versions') {
@@ -69,7 +137,9 @@ async function movieCaptions(action, value) {
       const entries = rows(menu);
       if (entries.length && !entries.some(el => before.includes(el))) {
         state.entries = entries;
-        return entries.map((el, i) => ({ index: i, label: (el.textContent.trim() || 'Wersja ' + (i + 1)).slice(0, 240) }));
+        return entries.map((el, i) => ({ index: i, label: (el.textContent.trim()
+          .replace(/(\.(?:srt|vtt|ass|ssa|sub))\s*(\d{1,3}%)\s*↓\s*([\d,.]+)$/i, '$1 · $2 · ↓ $3')
+          || 'Wersja ' + (i + 1)).slice(0, 240) }));
       }
       await sleep(150);
     }
@@ -132,14 +202,19 @@ async function movieCaptions(action, value) {
     }
     window.fetch = fetchSelection;
     let timer;
+    state.applying = true;
     try {
       entry.click();
       const result = await Promise.race([loaded, new Promise(done => { timer = setTimeout(() => done(null), 8000); })]);
       if (result) return result;
-      const track = Array.from(video.textTracks).find(t => t.mode === 'showing' && t.cues?.length && !tracks.includes(t));
-      if (track) { styleTrack(track); return { native: true }; }
+      const track = captionTracks().find(t => t.mode === 'showing' && t.cues?.length && !tracks.includes(t));
+      if (track) {
+        await movieCaptions('select', Array.from(video.textTracks).filter(t => ['captions', 'subtitles'].includes(t.kind)).indexOf(track));
+        return { native: true };
+      }
       throw Error('Odtwarzacz nie udostępnił treści tej wersji napisów.');
     } finally {
+      state.applying = false;
       clearTimeout(timer);
       if (window.fetch === fetchSelection) window.fetch = previousFetch;
       closeMenu();
@@ -152,12 +227,16 @@ async function movieCaptions(action, value) {
     selected = video.addTextTrack('subtitles', value.label.slice(0, 240), value.lang || '');
     selected.kadrSource = value.source || null;
     selected.mode = 'hidden';
-    for (const c of value.cues) if (Number.isFinite(c.start) && Number.isFinite(c.end) && c.end > c.start) selected.addCue(new VTTCue(c.start, c.end, c.text));
+    for (const c of value.cues) if (Number.isFinite(c.start) && Number.isFinite(c.end) && c.end > c.start) {
+      const cue = new VTTCue(c.start, c.end, c.text);
+      cue.kadrTop = c.top;
+      selected.addCue(cue);
+    }
   } else return false;
   closeMenu();
   if (layer) layer.style.setProperty('visibility', 'hidden', 'important');
-  for (const t of tracks) t.mode = t === selected ? 'showing' : 'disabled';
-  if (selected) { selected.mode = 'showing'; styleTrack(selected); }
+  state.manual = true;
+  selectTrack(selected, tracks);
   return true;
 }
 // Capture only the selected video's audio, using the browser's media permissions.

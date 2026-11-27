@@ -3,6 +3,7 @@ const path = require('node:path');
 const { randomUUID, createHash } = require('node:crypto');
 const { createWriteStream } = require('node:fs');
 const { pipeline } = require('node:stream/promises');
+const { createInterface } = require('node:readline');
 const { execFile } = require('node:child_process');
 const run = require('node:util').promisify(execFile);
 
@@ -55,13 +56,13 @@ function segmentsFromSrt(text) {
   return segments;
 }
 
-async function recognize(ffmpeg, directory, audio, signal) {
+async function recognize(ffmpeg, directory, audio, signal, progress = () => {}) {
   const job = randomUUID();
   const input = path.join(directory, job + '.audio');
   const output = job + '.srt';
   try {
     await fs.writeFile(input, audio, { signal, flag: 'wx' });
-    await run(ffmpeg, ['-nostdin', '-v', 'error', '-i', input, '-vn', '-af',
+    const result = run(ffmpeg, ['-nostdin', '-v', 'error', '-nostats', '-progress', 'pipe:1', '-i', input, '-vn', '-af',
       'asetpts=PTS-STARTPTS,whisper=model=' + model + ':language=auto:use_gpu=0:queue=12:format=srt:destination=' + output,
       '-f', 'null', '-'], {
       cwd: directory, windowsHide: true, signal,
@@ -69,6 +70,12 @@ async function recognize(ffmpeg, directory, audio, signal) {
       // on some drivers, e.g. Intel HD 520; recognition runs on the CPU anyway
       env: { ...process.env, GGML_DISABLE_VULKAN: '1' },
     });
+    const lines = createInterface({ input: result.child.stdout });
+    lines.on('line', line => {
+      const match = /^out_time_us=(\d+)$/.exec(line);
+      if (match) progress(Number(match[1]) / 1e6);
+    });
+    try { await result; } finally { lines.close(); }
     return segmentsFromSrt(await fs.readFile(path.join(directory, output), 'utf8'));
   } catch (error) {
     if (signal.aborted) throw Error('Anulowano generowanie napisów.');

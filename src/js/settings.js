@@ -28,7 +28,7 @@ window.K = window.K || {};
   K.SCHEMA = [
     { id: 'picture', title: 'Obraz', rows: [
       { type: 'heading', label: 'Renderowanie' },
-      { key: 'renderer', type: 'select', label: 'Renderer', hint: 'Zaawansowany włącza filtry poniżej. Natywny jest najlżejszy i przepuszcza HDR na ekranach HDR.',
+      { key: 'renderer', type: 'select', label: 'Renderer', hint: 'Zaawansowany włącza filtry poniżej. Obraz HDR jest automatycznie wyświetlany natywnie.',
         options: opt(['gl', 'Zaawansowany (WebGL2)'], ['native', 'Natywny (najlżejszy, HDR)']) },
       { key: 'scaler', type: 'select', label: 'Skalowanie obrazu', hint: 'Lanczos-3 daje najostrzejszy obraz; przy pomniejszaniu jądro jest poszerzane, więc nie ma migotania i schodków.', gl: true,
         options: opt(['lanczos', 'Lanczos-3 (najwyższa jakość)'], ['spline36', 'Spline36 (ostry, mniej obwódek)'], ['mitchell', 'Mitchell-Netravali (miękki)'], ['catrom', 'Catmull-Rom (bicubic)'], ['bilinear', 'Dwuliniowe (najszybsze)'], ['nearest', 'Najbliższy sąsiad (pixel-art)']) },

@@ -175,7 +175,10 @@ class Media {
     a.push(...maps, '-sn', '-dn', '-map_metadata', '-1', '-map_chapters', '-1');
 
     if (s.video === 'copy') a.push('-c:v', 'copy', ...(s.vcodec === 'hevc' ? ['-tag:v', 'hvc1'] : []));
-    else if (s.video === 'encode') a.push(...encoderArgs(s));
+    else if (s.video === 'encode') {
+      a.push(...encoderArgs(s));
+      if (s.tonemap) a.push('-color_primaries', 'bt709', '-color_trc', 'bt709', '-colorspace', 'bt709', '-color_range', 'tv');
+    }
     if (s.audio === 'copy') a.push('-c:a', 'copy');
     else if (s.audio === 'encode') {
       const ch = s.stereo ? 2 : Math.min(s.channels || 2, 8);

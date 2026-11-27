@@ -291,6 +291,8 @@ input[type=color] { width: 38px; height: 28px; border: 1px solid var(--line2); b
 #captions-dialog [hidden] { display: none; }
 #captions-dialog label { display: grid; gap: 5px; margin: 10px 0; }
 #captions-dialog select, #captions-dialog input { width: 100%; max-width: 100%; }
+#captions-dialog .caption-check { display: flex; align-items: center; gap: 8px; }
+#captions-dialog .caption-check input { width: auto; margin: 0; }
 #captions-dialog details { border-block: 1px solid var(--line2); margin: 16px 0; padding: 12px 0; }
 #captions-dialog summary { cursor: pointer; }
 #captions-dialog p { line-height: 1.5; color: var(--muted); }

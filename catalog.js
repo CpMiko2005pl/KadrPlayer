@@ -305,7 +305,7 @@ async function movieAction(id, action, value) {
   }
   if (!p.frame) return null;
   if (action === 'quality') return p.frame.executeJavaScript('(' + movieQuality + ')(' + (Number.isFinite(value) ? Number(value) : 'undefined') + ')');
-  if (action === 'caption-list' || ['caption-versions', 'caption-style', 'caption-apply', 'caption-dismiss'].includes(action) || action === 'caption-select' || action === 'caption-add') {
+  if (['caption-list', 'caption-versions', 'caption-style', 'caption-apply', 'caption-dismiss', 'caption-select', 'caption-add', 'caption-auto'].includes(action)) {
     return p.frame.executeJavaScript(`(${movieCaptions})(${JSON.stringify(action.slice(8))},${JSON.stringify(value)})`, true);
   }
   if (action === 'capture' && Number.isFinite(value?.start) && value.seconds > 0 && value.seconds <= 300) {
