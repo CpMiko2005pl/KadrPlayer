@@ -20,6 +20,12 @@ Na ekranie startowym zobaczysz sześć popularnych filmów z plakatami. Wybierz 
 
 Kliknięcie plakatu filmu lub odcinka uruchamia odtwarzanie w głównym oknie. Porusz myszą, aby wyświetlić sterowanie i strzałkę powrotu. Strzałka kończy odtwarzanie i otwiera ostatnią listę wyników lub listę odcinków.
 
+W katalogu możesz wybrać jeden z 21 gatunków filmowych. W obrębie gatunku zmienisz kolejność według popularności, daty dodania, premiery lub oceny. Wpisany tytuł możesz połączyć z gatunkiem albo zawęzić wyniki do filmów lub seriali.
+
+Podczas oglądania naciśnij **V** lub kliknij **Napisy**. Wybierz **Wybierz napisy z HydraHD**, żeby wskazać język i wersję udostępnioną przez odtwarzacz. Własny plik SRT, VTT lub ASS wczytasz przyciskiem **Wczytaj plik napisów**.
+
+Opcja **Generuj napisy z dźwięku** transkrybuje dialogi w języku nagrania. Możesz wybrać minutę, pięć minut lub cały film i zapisać wynik jako SRT. Potrzebujesz własnego klucza Groq. Dopiero kliknięcie **Wyślij dźwięk i wygeneruj** rozpoczyna wysyłkę. Dla HydraHD przygotowanie dźwięku odbywa się podczas odtwarzania. Przy plikach lokalnych dźwięk wyodrębnia FFmpeg. [Klucze Groq](https://console.groq.com/keys) · [Limity darmowego planu](https://console.groq.com/docs/rate-limits)
+
 ## Budowanie
 ```
 npm install

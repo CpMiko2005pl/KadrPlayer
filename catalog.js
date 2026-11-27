@@ -1,6 +1,7 @@
 const { WebContentsView, session, powerSaveBlocker, net } = require('electron');
 const { setTimeout: delay } = require('node:timers/promises');
 
+const { movieCaptions, captureMovieAudio } = require('./captions');
 const origin = 'https://hydrahd.com';
 // The .com catalog redirects movie pages to a playback domain listed on hydrahd.info.
 const movieOrigins = new Set([origin, 'https://hydrahd.gd', 'https://hydrahd.ac', 'https://hydrahd.cc',
@@ -31,8 +32,8 @@ const seriesPath = /^\/watchseries\/[\w-]+\/?$/;
 const playbackPath = /^(?:\/movie\/[\w-]+|\/watchseries\/[\w-]+\/season\/\d+\/episode\/\d+)\/?$/;
 const movieAddress = address => catalogAddress(address, playbackPath);
 
-async function fetchSeries(address) {
-  const url = catalogAddress(address, seriesPath);
+async function fetchDetails(address, pathPattern = seriesPath) {
+  const url = catalogAddress(address, pathPattern);
   if (!url) throw new Error('Nieprawidłowy adres serialu.');
   return new Promise((resolve, reject) => {
     const request = net.request({ url, session: getSession(), redirect: 'manual' });
@@ -45,7 +46,7 @@ async function fetchSeries(address) {
     }
     request.on('error', fail);
     request.on('redirect', (_status, _method, target) => {
-      if (++redirects <= 4 && catalogAddress(target, seriesPath)) request.followRedirect();
+      if (++redirects <= 4 && catalogAddress(target, pathPattern)) request.followRedirect();
       else fail(new Error('Nieprawidłowe przekierowanie serialu.'));
     });
     request.on('response', response => {
@@ -57,13 +58,16 @@ async function fetchSeries(address) {
   });
 }
 
-async function fetchCatalog({ section, query, page }) {
+async function fetchCatalog({ section, query, page, genre, sort }) {
   if (!Number.isSafeInteger(page) || page < 1 || page > 100000) throw new Error('Nieprawidłowa strona katalogu.');
   let url;
   if (section === 'search' && typeof query === 'string' && query.trim() && query.length <= 160) {
     const encoded = encodeURIComponent(query.trim()).replace(/%20/g, '+');
     url = new URL(page === 1 ? '/index.php' : '/search/' + encoded + '/' + page, origin);
     if (page === 1) url.search = new URLSearchParams({ menu: 'search', query: query.trim() }).toString();
+  } else if (section === 'genre' && /^[a-z]+(?:-[a-z]+)?$/.test(genre) && genre.length <= 20 && ['', 'latest', 'release', 'top-rated'].includes(sort)) {
+    const path = '/genres/watch-' + genre + '-movies-online-free' + (sort ? '-' + sort : '');
+    url = new URL(path + (page === 1 && !sort ? '' : '/' + page), origin);
   } else if (section === 'popular' || section === 'date') {
     url = new URL('/movies/' + section + '/' + (page === 1 ? '' : page), origin);
   } else if (section === 'series') {
@@ -155,6 +159,7 @@ async function prepareVideo(p) {
         }
       }
       p.frame = frame;
+      await frame.executeJavaScript(`(${movieCaptions})('init')`);
       return;
     }
     await delay(450, undefined, { signal: p.abort.signal });
@@ -196,7 +201,7 @@ async function openMovie(parent, address, id, bounds, volume) {
   contents.on('will-frame-navigate', restrictNavigation);
   contents.on('will-redirect', restrictNavigation);
   contents.on('before-input-event', (event, key) => {
-    if (key.type === 'keyDown' && [' ', 'Escape', 'ArrowLeft', 'ArrowRight', 'm', 'f', 'Backspace', 'k'].includes(key.key)) {
+    if (key.type === 'keyDown' && [' ', 'Escape', 'ArrowLeft', 'ArrowRight', 'm', 'f', 'Backspace', 'k', 'v'].includes(key.key)) {
       event.preventDefault();
       parent.webContents.send('catalog:key', { key: key.key, ctrlKey: key.control, shiftKey: key.shift, altKey: key.alt });
     }
@@ -235,6 +240,13 @@ async function movieAction(id, action, value) {
   if (action === 'bounds') { positionMovie(p, value); return null; }
   if (action === 'visible') { p.view.setVisible(value === true); return null; }
   if (!p.frame) return null;
+  if (action === 'caption-list' || action === 'caption-provider' || action === 'caption-select' || action === 'caption-add') {
+    return p.frame.executeJavaScript(`(${movieCaptions})(${JSON.stringify(action.slice(8))},${JSON.stringify(value)})`, true);
+  }
+  if (action === 'capture' && Number.isFinite(value?.start) && value.seconds > 0 && value.seconds <= 300) {
+    return p.frame.executeJavaScript(`(${captureMovieAudio})(${Number(value.start)},${Number(value.seconds)})`, true);
+  }
+  if (action === 'capture-cancel') return p.frame.executeJavaScript("void dispatchEvent(new Event('kadr-stop-capture'))");
   let change = '';
   if (action === 'toggle') change = "if(v.paused) void v.play().catch(()=>{}); else v.pause();";
   else if (action === 'seek' && Number.isFinite(value)) change = `if(Number.isFinite(v.duration)) v.currentTime=Math.max(0,Math.min(v.duration,${value}));`;
@@ -249,4 +261,4 @@ async function movieAction(id, action, value) {
   return state;
 }
 
-module.exports = { fetchCatalog, fetchSeries, openMovie, movieAction, closeMovie };
+module.exports = { fetchCatalog, fetchSeries: fetchDetails, fetchMovieDetails: address => fetchDetails(address, /^\/movie\/[\w-]+\/?$/), openMovie, movieAction, closeMovie };

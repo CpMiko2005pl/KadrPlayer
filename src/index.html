@@ -116,6 +116,21 @@
   </div></div>
 
   <div id="tooltip"></div>
+  <dialog id="captions-dialog" aria-labelledby="captions-title">
+    <header><h2 id="captions-title">Napisy</h2><button id="captions-close" class="cb" type="button" aria-label="Zamknij napisy">×</button></header>
+    <div id="captions-tracks"></div>
+    <div class="caption-actions"><button id="captions-provider" class="btn" hidden>Wybierz napisy z HydraHD…</button><button id="captions-file" class="btn">Wczytaj plik napisów…</button></div>
+    <details id="captions-ai">
+      <summary>Generuj napisy z dźwięku</summary>
+      <p id="captions-help"></p>
+      <label>Klucz API Groq <input id="captions-key" type="password" autocomplete="off" spellcheck="false"></label>
+      <button id="captions-get-key" class="btn ghost">Otwórz stronę kluczy Groq ↗</button>
+      <label>Zakres <select id="captions-range"><option value="60">Minuta od bieżącej pozycji</option><option value="300">5 minut od bieżącej pozycji</option><option value="all">Cały film</option></select></label>
+      <button id="captions-generate" class="btn primary">Wyślij dźwięk i wygeneruj</button>
+    </details>
+    <button id="captions-save" class="btn" hidden>Zapisz wygenerowane napisy jako SRT…</button>
+    <p id="captions-status" role="status"></p>
+  </dialog>
   <dialog id="catalog" aria-labelledby="catalog-title">
     <header class="catalog-head">
       <div><small>HydraHD</small><h2 id="catalog-title">Filmy i seriale</h2></div>
@@ -130,6 +145,11 @@
       <button type="button" data-section="date" aria-pressed="false">Ostatnio dodane</button>
       <button type="button" data-section="series" aria-pressed="false">Seriale</button>
     </nav>
+    <div class="catalog-filters">
+      <label>Gatunek filmu <select id="catalog-genre"><option value="">Wszystkie</option></select></label>
+      <label id="catalog-sort-label" hidden>Kolejność <select id="catalog-sort"><option value="">Popularność</option><option value="latest">Ostatnio dodane</option><option value="release">Data premiery</option><option value="top-rated">Ocena</option></select></label>
+      <label id="catalog-kind-label" hidden>Rodzaj <select id="catalog-kind"><option value="">Wszystkie</option><option value="movie">Filmy</option><option value="series">Seriale</option></select></label>
+    </div>
     <div id="catalog-body">
     <div id="catalog-content">
       <h3 id="catalog-heading"></h3>

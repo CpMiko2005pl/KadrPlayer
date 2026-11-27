@@ -5,6 +5,10 @@ K.createMovieCatalog = function (playMovie) {
   const sections = { popular: 'Na czasie w HydraHD', date: 'Ostatnio dodane filmy', series: 'Ostatnio dodane seriale' };
   const detail = $('#series-detail'), seasonSelect = $('#series-season'), episodeList = $('#series-episodes');
   let section = 'popular', query = '', page = 1, request = 0, loaded = false;
+  const genre = $('#catalog-genre'), sort = $('#catalog-sort'), kind = $('#catalog-kind');
+  const genres = { action: 'Akcja', animation: 'Animacja', biography: 'Biografia', documentary: 'Dokumentalny', drama: 'Dramat', family: 'Familijny', fantasy: 'Fantasy', history: 'Historyczny', horror: 'Horror', comedy: 'Komedia', crime: 'Kryminał', music: 'Muzyczny', musical: 'Musical', adventure: 'Przygodowy', romance: 'Romans', 'sci-fi': 'Science fiction', sport: 'Sportowy', mystery: 'Tajemnica', thriller: 'Thriller', western: 'Western', war: 'Wojenny' };
+  for (const [slug, name] of Object.entries(genres)) genre.add(new Option(name, slug));
+  const genreCache = new Map();
   let seriesRequest = 0;
   let popularPage = null, popularTime = 0;
   $('#catalog-close').innerHTML = K.icon('x');
@@ -100,8 +104,29 @@ K.createMovieCatalog = function (playMovie) {
     }
   }
 
+  async function searchFilters(movies, id, slug, type) {
+    const candidates = movies.filter(movie => slug ? !movie.series : !type || movie.series === (type === 'series'));
+    if (!slug) return candidates;
+    const matches = new Set();
+    let index = 0;
+    async function worker() {
+      while (index < candidates.length && id === request) {
+        const movie = candidates[index++];
+        if (!genreCache.has(movie.url)) {
+          const doc = inertPage(await window.kadr.movieDetails(movie.url));
+          const links = [...doc.querySelectorAll('a[href*="/genres/watch-"]')];
+          if (genreCache.size >= 500) genreCache.delete(genreCache.keys().next().value);
+          genreCache.set(movie.url, links.map(a => URL.parse(a.getAttribute('href'), movie.url)?.pathname));
+        }
+        if (genreCache.get(movie.url).includes('/genres/watch-' + slug + '-movies-online-free')) matches.add(movie.url);
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(3, candidates.length) }, worker));
+    return candidates.filter(movie => matches.has(movie.url));
+  }
+
   function getPage(section, query, page) {
-    const fetchPage = () => window.kadr.listMovies({ section, query, page }).then(html => parsePage(html, section, page));
+    const fetchPage = () => window.kadr.listMovies({ section, query, page, genre: genre.value, sort: sort.value }).then(html => parsePage(html, section, page));
     if (section !== 'popular' || page !== 1) return fetchPage();
     if (!popularPage || Date.now() - popularTime > 300000) {
       popularTime = Date.now();
@@ -146,14 +171,19 @@ K.createMovieCatalog = function (playMovie) {
     closeSeries();
     loaded = false;
     for (const tab of dialog.querySelectorAll('[data-section]')) tab.setAttribute('aria-pressed', String(tab.dataset.section === section));
-    $('#catalog-heading').textContent = section === 'search' ? 'Wyniki dla „' + query + '”' : sections[section];
+    $('#catalog-sort-label').hidden = section !== 'genre';
+    $('#catalog-kind-label').hidden = section !== 'search' || !!genre.value;
+    $('#catalog-heading').textContent = section === 'search' ? 'Wyniki dla „' + query + '”' : (section === 'genre' ? genres[genre.value] : sections[section]);
     $('#catalog-content').scrollTop = 0;
     $('#catalog-pages').hidden = true;
     $('#catalog-retry').hidden = true;
     status.textContent = 'Wczytywanie tytułów…';
     grid.replaceChildren();
     try {
-      const { movies, hasNext } = await getPage(section, query, page);
+      const result = await getPage(section, query, page);
+      if (id !== request) return;
+      const { hasNext } = result;
+      const movies = section === 'search' ? await searchFilters(result.movies, id, genre.value, kind.value) : result.movies;
       if (id !== request) return;
       grid.replaceChildren(...movies.map(movie => makeCard(movie, status)));
       status.textContent = movies.length ? '' : 'Brak wyników na tej stronie. Spróbuj innego tytułu.';
@@ -170,12 +200,17 @@ K.createMovieCatalog = function (playMovie) {
   }
 
   for (const tab of dialog.querySelectorAll('[data-section]')) tab.onclick = () => {
+    genre.value = sort.value = kind.value = '';
     section = tab.dataset.section; query = ''; input.value = ''; page = 1; load();
   };
-  $('#catalog-search').onsubmit = event => {
-    event.preventDefault();
-    query = input.value.trim(); section = query ? 'search' : 'popular'; page = 1; load();
-  };
+  function applyFilters() {
+    query = input.value.trim();
+    section = query ? 'search' : genre.value ? 'genre' : 'popular';
+    page = 1;
+    load();
+  }
+  genre.onchange = sort.onchange = kind.onchange = applyFilters;
+  $('#catalog-search').onsubmit = event => { event.preventDefault(); applyFilters(); };
   $('#catalog-prev').onclick = () => { if (page > 1) { page--; load(); } };
   $('#catalog-next').onclick = () => { page++; load(); };
   $('#catalog-retry').onclick = load;
@@ -193,7 +228,7 @@ K.createMovieCatalog = function (playMovie) {
     dialog.showModal();
     if (!popular && !detail.hidden && !$('#series-season-label').hidden) seasonSelect.focus();
     else input.focus();
-    if (popular) { section = 'popular'; page = 1; query = ''; input.value = ''; }
+    if (popular) { genre.value = sort.value = kind.value = ''; section = 'popular'; page = 1; query = ''; input.value = ''; }
     if (popular || !loaded) load();
   };
 };

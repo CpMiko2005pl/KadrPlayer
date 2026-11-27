@@ -100,11 +100,11 @@
     if (!remote) return;
     const id = remote.id;
     window.kadr.movieAction(id, 'bounds', movieBounds()).catch(() => {});
-    const visible = !$('#catalog').open && !document.querySelector('.drawer.open, .modal.open') && !app.classList.contains('error');
+    const visible = !$('#captions-dialog').open && !$('#catalog').open && !document.querySelector('.drawer.open, .modal.open') && !app.classList.contains('error');
     window.kadr.movieAction(id, 'visible', visible).catch(() => {});
   }
   const movieObserver = new MutationObserver(refreshMovieView);
-  for (const el of document.querySelectorAll('#catalog, .drawer, #modal')) movieObserver.observe(el, { attributes: true, attributeFilter: ['open', 'class'] });
+  for (const el of document.querySelectorAll('#catalog, #captions-dialog, .drawer, #modal')) movieObserver.observe(el, { attributes: true, attributeFilter: ['open', 'class'] });
   window.addEventListener('resize', refreshMovieView);
 
   async function controlMovie(action, value) {
@@ -118,7 +118,7 @@
       Object.assign(current, state);
       updateTimeUI();
       setPlayIcon();
-      if (ended) onEnded();
+      if (ended && !generating) onEnded();
     } catch {
       if (current === remote) movieFailed();
     }
@@ -570,7 +570,7 @@
   $('#b-settings').onclick = () => togglePanel();
   $('#b-list').onclick = () => toggleList();
   $('#b-speed').onclick = () => popup(speedMenu());
-  $('#b-subs').onclick = () => popup(subsMenu());
+  $('#b-subs').onclick = () => remote ? openCaptions() : popup(subsMenu());
   $('#b-audio').onclick = () => popup(audioMenu());
   $('#btn-menu').onclick = () => popup(mainMenu());
   $('#btn-back').onclick = returnToCatalog;
@@ -652,6 +652,132 @@
     items.push(mk('Ustawienia dźwięku…', () => openPanel('audio')));
     return items;
   }
+  const captionDialog = $('#captions-dialog');
+  const captionStatus = $('#captions-status');
+  let generating = false;
+  let captionSession = 0;
+  function closeCaptions() {
+    if (captionDialog.open) captionDialog.close();
+  }
+  captionDialog.addEventListener('close', () => {
+    captionSession++;
+    if (generating) window.kadr.cancelCaptions().catch(() => {});
+  });
+  $('#captions-close').onclick = closeCaptions;
+  $('#captions-get-key').onclick = () => window.kadr.external('https://console.groq.com/keys');
+  function captionError(error) {
+    return String(error.message || error).split('Error: ').pop().slice(0, 220);
+  }
+  async function openCaptions(expanded = false) {
+    if (!cur || (remote && !remote.ready)) return;
+    if (!captionDialog.open) captionDialog.showModal();
+    $('#captions-ai').open = expanded === true;
+    captionStatus.textContent = '';
+    $('#captions-help').textContent = 'Groq tworzy napisy w języku nagrania. Bezpłatny plan ma limity. Klucz pozostaje w pamięci do zamknięcia aplikacji. ' + (remote ? 'Podczas generowania HydraHD odtwarza wybrany fragment w czasie rzeczywistym, a potem wraca do poprzedniej pozycji.' : 'Do Groq trafi dźwięk wybranego fragmentu pliku.');
+    const c = cur;
+    const container = $('#captions-tracks');
+    container.replaceChildren();
+    $('#captions-provider').hidden = true;
+    $('#captions-save').hidden = !c.generated?.length;
+    if (!remote) return;
+    try {
+      const list = await window.kadr.movieAction(remote.id, 'caption-list');
+      if (cur !== c || !captionDialog.open || !list) return;
+      $('#captions-provider').hidden = !list.provider;
+      const select = document.createElement('select');
+      select.add(new Option('Wyłączone', '-1'));
+      if (list.providerOn) select.add(new Option('Napisy HydraHD', 'provider'));
+      list.tracks.forEach((track, i) => select.add(new Option(track.label, String(i))));
+      select.value = list.providerOn ? 'provider' : String(list.tracks.findIndex(t => t.active));
+      select.onchange = async () => {
+        try { await window.kadr.movieAction(remote.id, 'caption-select', Number(select.value)); closeCaptions(); }
+        catch (e) { captionStatus.textContent = captionError(e); }
+      };
+      const label = document.createElement('label');
+      label.append('Aktywna ścieżka', select);
+      container.replaceChildren(label);
+    } catch (e) { captionStatus.textContent = captionError(e); }
+  }
+  $('#captions-provider').onclick = async () => {
+    try {
+      if (!await window.kadr.movieAction(remote.id, 'caption-provider')) throw Error('Menu dostawcy jest niedostępne.');
+      closeCaptions();
+    } catch (e) { captionStatus.textContent = captionError(e); }
+  };
+  async function importRemoteFile(file) {
+    const movie = remote;
+    if (!movie?.ready) return;
+    try {
+      const cues = K.parseSubtitles(await window.kadr.readText(file), { fps: 23.976 });
+      if (movie !== remote) return;
+      if (!cues.length) throw Error('Plik nie zawiera rozpoznanych napisów.');
+      await window.kadr.movieAction(movie.id, 'caption-add', { label: baseName(file), cues });
+      closeCaptions();
+    } catch (e) {
+      if (movie !== remote) return;
+      if (!captionDialog.open) await openCaptions();
+      captionStatus.textContent = captionError(e);
+    }
+  }
+  $('#captions-file').onclick = async () => {
+    const c = cur, file = await window.kadr.openSubtitle();
+    if (!file || cur !== c) return;
+    if (remote) await importRemoteFile(file);
+    else { addExternalSub(file, true); closeCaptions(); }
+  };
+  window.kadr.onCaptionProgress(({ position, seconds, start, length }) => {
+    if (generating && captionDialog.open) captionStatus.textContent = 'Generowanie napisów od ' + fmt(position) + ' do ' + fmt(position + seconds) + ' · koniec zakresu ' + fmt(start + length);
+  });
+  function captionBusy(busy) {
+    generating = busy;
+    for (const el of captionDialog.querySelectorAll('input, select, button')) {
+      if (el.id !== 'captions-close') el.disabled = busy;
+    }
+    $('#captions-close').setAttribute('aria-label', busy ? 'Anuluj generowanie' : 'Zamknij napisy');
+  }
+  $('#captions-generate').onclick = async () => {
+    if (!cur || generating) return;
+    const key = $('#captions-key').value.trim();
+    if (!key) { captionStatus.textContent = 'Wklej klucz z konta Groq.'; $('#captions-key').focus(); return; }
+    const c = cur, session = captionSession, range = $('#captions-range').value;
+    const start = range === 'all' ? 0 : playbackTime();
+    const length = Math.min(playbackDuration() - start, range === 'all' ? Infinity : Number(range));
+    if (!Number.isFinite(length) || length <= 0.15) { captionStatus.textContent = 'Wybierz fragment przed końcem filmu.'; return; }
+    const resumeLocal = !remote && !video.paused;
+    if (resumeLocal) video.pause();
+    captionBusy(true);
+    try {
+      const { cues, warning } = await window.kadr.generateCaptions({ id: remote?.id, file: c.item.path, stream: engine.sel.audio?.index, start, length, key });
+      if (cur !== c || session !== captionSession || !captionDialog.open) return;
+      if (!cues.length) { captionStatus.textContent = 'W tym fragmencie nie rozpoznano mowy.'; return; }
+      const label = 'Whisper · ' + fmt(start) + ' – ' + fmt(warning ? cues[cues.length - 1].end : start + length);
+      if (remote) await window.kadr.movieAction(remote.id, 'caption-add', { label, cues });
+      else {
+        c.subTracks.push({ kind: 'generated', label, cues });
+        await selectSub(c.subTracks.length - 1);
+      }
+      c.generated = cues;
+      await openCaptions();
+      captionStatus.textContent = warning || 'Włączono napisy. Liczba kwestii: ' + cues.length + '.';
+    } catch (e) {
+      if (cur === c && session === captionSession) captionStatus.textContent = captionError(e);
+    } finally {
+      captionBusy(false);
+      if (resumeLocal && cur === c) video.play().catch(() => {});
+    }
+  };
+  $('#captions-save').onclick = async () => {
+    if (!cur?.generated?.length) return;
+    const stamp = seconds => {
+      const ms = Math.round(seconds * 1000);
+      const pad = n => String(n).padStart(2, '0');
+      return pad(Math.floor(ms / 3600000)) + ':' + pad(Math.floor(ms / 60000) % 60) + ':' + pad(Math.floor(ms / 1000) % 60) + ',' + String(ms % 1000).padStart(3, '0');
+    };
+    const text = cur.generated.map((c, i) => (i + 1) + '\r\n' + stamp(c.start) + ' --> ' + stamp(c.end) + '\r\n' + c.text + '\r\n').join('\r\n');
+    try { await window.kadr.saveCaptions(cur.item.title || 'Napisy', text); }
+    catch (e) { captionStatus.textContent = captionError(e); }
+  };
+
   function subsMenu() {
     if (!cur || !cur.info) return [mk('Brak pliku', null, { enabled: false })];
     const items = [radio('Wyłączone', cur.subSel < 0, () => selectSub(-1))];
@@ -661,6 +787,7 @@
       mk('Wcześniej o 0,1 s (Z)', () => subDelay(-0.1)), mk('Później o 0,1 s (X)', () => subDelay(0.1)),
       mk('Wcześniej o 1 s', () => subDelay(-1)), mk('Później o 1 s', () => subDelay(1)), mk('Zeruj', () => subDelay(-(cur.subDelay || 0))),
     ] }));
+    if (!/^https?:/i.test(cur.item.path) && cur.info.audio.length) items.push(mk('Generuj napisy z dźwięku…', () => openCaptions(true)));
     items.push(mk('Wygląd napisów…', () => openPanel('subs')));
     return items;
   }
@@ -686,6 +813,7 @@
       sep,
     ];
     if (cur?.item.catalog) {
+      items.push(mk('Napisy…', openCaptions, { enabled: !!remote?.ready }));
       items.splice(6, 0, mk('Wróć do katalogu', returnToCatalog, { accelerator: 'Esc' }));
       items.push(mk(S.muted ? 'Włącz dźwięk' : 'Wycisz', () => $('#b-mute').click(), { accelerator: 'M' }));
       items.push(check('Pełny ekran', app.classList.contains('fullscreen'), () => window.kadr.fullscreen(), 'F'));
@@ -791,6 +919,12 @@
       return;
     }
     const t = c.subTracks[i];
+    if (t.kind === 'generated') {
+      if (prevBurn) engine.setBurn(null);
+      c.cues = t.cues;
+      subsView.set(t.cues);
+      return;
+    }
     const isAss = t.kind === 'embedded' ? ['ass', 'ssa'].includes(t.stream.codec_name) : ['ass', 'ssa'].includes(ext(t.path));
     if (t.kind === 'embedded' && (t.stream.bitmap || (isAss && S.burnAss))) {
       engine.setBurn(t.stream);
@@ -812,6 +946,7 @@
   }
   function addExternalSub(file, select) {
     if (!cur) return;
+    if (remote) { void importRemoteFile(file); return; }
     const i = cur.subTracks.findIndex(t => t.path === file);
     if (i >= 0) { if (select) selectSub(i); return; }
     cur.subTracks.push({ kind: 'file', path: file, label: `Plik: ${baseName(file)}`, lang: guessLang(baseName(file)) });
@@ -959,6 +1094,7 @@
     playIndex(i);
   }
   function stopPlayback() {
+    closeCaptions();
     saveResume();
     closeRemote();
     engine.stop();
@@ -995,6 +1131,7 @@
   }
 
   function playItem(item, opts = {}) {
+    closeCaptions();
     saveResume();
     closeRemote();
     clearThumbs();
@@ -1386,7 +1523,7 @@
 
   // ---------- keyboard ----------
   document.addEventListener('keydown', e => {
-    if ($('#catalog').open) return;
+    if ($('#catalog').open || $('#captions-dialog').open) return;
     if (e.target.matches('input, select, textarea')) return;
     const k = e.key, ctrl = e.ctrlKey, shift = e.shiftKey;
     let handled = true;
@@ -1430,7 +1567,7 @@
     else if (k === ']') setSpeed((video.playbackRate || 1) + 0.1);
     else if (k === 'Backspace') { if (cur?.item.catalog) returnToCatalog(); else setSpeed(1); }
     else if (k === 's' || k === 'S') screenshot();
-    else if (k === 'v') cycleSub();
+    else if (k.toLowerCase() === 'v') remote ? openCaptions() : cycleSub();
     else if (k === 'V') selectSub(-1);
     else if (k === 'b' || k === 'B') cycleAudio();
     else if (k === 'z' || k === 'Z') subDelay(-0.1);

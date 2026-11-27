@@ -179,6 +179,67 @@ handle('media:find-in-page', url => media.findInPage(url));
 handle('catalog:list', request => catalog.fetchCatalog(request));
 handle('catalog:series', url => catalog.fetchSeries(url));
 handle('catalog:play', (url, id, bounds, volume) => catalog.openMovie(win, url, id, bounds, volume));
+const captions = require('./captions');
+let captionJob;
+function stopCaptionJob() {
+  if (!captionJob) return;
+  captionJob.abort.abort();
+  if (captionJob.id != null) void catalog.movieAction(captionJob.id, 'capture-cancel').catch(() => {});
+}
+app.on('before-quit', stopCaptionJob);
+handle('captions:cancel', stopCaptionJob);
+handle('captions:generate', async ({ id, file, stream, start, length, key }) => {
+  if (captionJob) throw Error('Generowanie jest już uruchomione.');
+  if (typeof key !== 'string' || !/^[A-Za-z0-9_-]{12,250}$/.test(key)) throw Error('Wprowadź prawidłowy klucz API Groq.');
+  if (!Number.isFinite(start) || start < 0 || !Number.isFinite(length) || length <= 0 || length > 7 * 86400) throw Error('Nieprawidłowy zakres nagrania.');
+  if (id == null && (!path.isAbsolute(file) || !fs.statSync(file).isFile())) throw Error('Wybierz lokalny plik multimedialny.');
+  const job = captionJob = { id, abort: new AbortController() };
+  const signal = job.abort.signal;
+  const cues = [];
+  let previous;
+  try {
+    if (id != null) {
+      previous = await catalog.movieAction(id, 'status');
+      if (!previous) throw Error('Odtwarzacz filmu jest niedostępny.');
+    }
+    for (let position = start; position < start + length - 0.15;) {
+      signal.throwIfAborted();
+      const seconds = Math.min(id == null ? 300 : 60, start + length - position);
+      win.webContents.send('captions:progress', { position, seconds, start, length });
+      let audio, offset = position, end = position + seconds;
+      if (id == null) audio = await captions.localAudio(media.ffmpeg, file, position, seconds, stream, signal);
+      else {
+        const clip = await catalog.movieAction(id, 'capture', { start: position, seconds });
+        if (!clip || typeof clip.audio !== 'string' || clip.audio.length > 12000000 || !Number.isFinite(clip.offset) || !Number.isFinite(clip.end) || clip.end <= position + 0.01) throw Error('Nie udało się pobrać dźwięku odtwarzacza.');
+        audio = Buffer.from(clip.audio, 'base64');
+        offset = clip.offset;
+        end = clip.end;
+      }
+      signal.throwIfAborted();
+      const segments = await captions.transcribe(audio, id == null ? 'audio.mp3' : 'audio.webm', key, signal);
+      for (const s of segments) {
+        const from = Math.max(offset, offset + s.start), to = Math.min(end, offset + s.end);
+        if (to > from) cues.push({ start: from, end: to, text: s.text });
+      }
+      position = end;
+    }
+    return { cues };
+  } catch (error) {
+    if (cues.length && !signal.aborted) return { cues, warning: 'Zachowano gotową część napisów. ' + error.message };
+    throw error;
+  } finally {
+    if (previous) {
+      const state = await catalog.movieAction(id, 'seek', previous.time).catch(() => null);
+      if (state && state.paused !== previous.paused) await catalog.movieAction(id, 'toggle').catch(() => {});
+    }
+    captionJob = null;
+  }
+});
+handle('captions:save', async (title, text) => {
+  const { filePath } = await dialog.showSaveDialog(win, { defaultPath: String(title).replace(/[<>:"/\\\\|?*]/g, '_') + '.srt', filters: [{ name: 'Napisy SRT', extensions: ['srt'] }] });
+  if (filePath) await fs.promises.writeFile(filePath, text, 'utf8');
+});
+handle('catalog:movie-details', address => catalog.fetchMovieDetails(address));
 handle('catalog:action', (id, action, value) => catalog.movieAction(id, action, value));
 handle('media:encoders', () => media.encoders());
 handle('media:cropdetect', (input, dur) => media.cropdetect(input, dur));
